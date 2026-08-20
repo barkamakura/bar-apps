@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Bar KAMAKURA 値段確認アプリ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --surface-2: #f3f2ef;
+    --surface-3: #eae9e4;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #8a8975;
+    --accent: #2a78d6;
+    --accent-soft: #eaf1fb;
+    --danger: #e34948;
+    --danger-soft: #fbeceb;
+    --good: #1baf7a;
+    --border: #e4e3dd;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--surface-1);
+    color: var(--text-primary);
+  }
+  .app { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { font-size: 13px; color: var(--text-secondary); margin: 0 0 16px; }
+  .sync-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; padding: 6px 10px; background: var(--surface-2); border-radius: 6px; }
+  .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+  .sync-dot.syncing { background: var(--accent); }
+  .sync-dot.error { background: var(--danger); }
+
+  .tab-row { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tab-row button { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); font-weight: 500; cursor: pointer; border-radius: 8px; padding: 9px 16px; font-size: 13px; }
+  .tab-row button.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+  .panel { background: var(--surface-2); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+  .panel h2 { font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; align-items: end; }
+  label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  input {
+    width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 13px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.btn-primary { background: var(--accent); color: white; cursor: pointer; font-size: 13px; border: none; border-radius: 8px; padding: 9px 16px; font-weight: 600; }
+  button.btn-primary:hover { opacity: 0.9; }
+  .btn-del {
+    background: transparent; color: var(--danger); border: 1px solid var(--danger);
+    padding: 5px 12px; font-weight: 500; font-size: 12px; border-radius: 8px; cursor: pointer;
+  }
+  .btn-del:hover { background: var(--danger-soft); }
+
+  .preview-box {
+    background: var(--surface-1); border: 1px dashed var(--border); border-radius: 8px;
+    padding: 12px 14px; margin-top: 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.9;
+  }
+  .preview-box b { color: var(--text-primary); }
+  .preview-box .sell-price { font-size: 20px; color: var(--accent); font-weight: 700; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { font-size: 11px; color: var(--text-muted); font-weight: 600; }
+  .item-name { font-weight: 600; }
+  .empty-msg { color: var(--text-muted); font-size: 13px; padding: 20px 0; text-align: center; }
+</style>
+</head>
+<body>
+<script>
+// 直接このURLを開かれたときは、暗証番号の画面へ戻します
+try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.html"); } catch (e) {}
+</script>
+
+<div class="app">
+  <h1>Bar KAMAKURA 値段確認</h1>
+  <p class="subtitle">料理・お酒の品目と値段を記録します(原価率12.5%で自動計算)</p>
+  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span></div>
+
+  <div class="tab-row">
+    <button id="tab-dish" class="active">料理</button>
+    <button id="tab-liquor">お酒</button>
+    <button id="tab-bottle">お酒(ボトル)</button>
+  </div>
+
+  <!-- 料理 -->
+  <div id="view-dish">
+    <div class="panel">
+      <h2>料理を追加</h2>
+      <div class="form-grid">
+        <div><label>品目名</label><input type="text" id="dish-name" placeholder="例: 白身魚フライ"></div>
+        <div><label>値段(円)</label><input type="number" id="dish-price" placeholder="例: 500"></div>
+        <div><button class="btn-primary" id="dish-add" style="width:100%">追加</button></div>
+      </div>
+    </div>
+    <table id="dish-table"><thead><tr><th>品目名</th><th>値段</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- お酒 -->
+  <div id="view-liquor" style="display:none">
+    <div class="panel">
+      <h2>お酒を追加(原価から自動計算)</h2>
+      <div class="form-grid">
+        <div><label>お酒の名前</label><input type="text" id="liq-name" placeholder="例: 余市"></div>
+        <div>
+          <label>ジャンル(必須)</label>
+          <select id="liq-category"><option value="">選択してください</option></select>
+        </div>
+        <div><label>1本の容量(ml)</label><input type="number" id="liq-bottle-ml" placeholder="例: 720"></div>
+        <div><label>1杯の量(ml)</label><input type="number" id="liq-pour-ml" placeholder="例: 30"></div>
+        <div><label>1本の値段(円)</label><input type="number" id="liq-bottle-price" placeholder="例: 2400"></div>
+      </div>
+      <div class="preview-box" id="liq-preview">数字を入力すると自動でここに計算結果が出ます</div>
+      <div style="margin-top:12px"><button class="btn-primary" id="liq-add">この内容で追加</button></div>
+    </div>
+    <div id="liquor-groups"></div>
+  </div>
+
+  <!-- お酒(ボトル) -->
+  <div id="view-bottle" style="display:none">
+    <div class="panel">
+      <h2>お酒(ボトル)を追加</h2>
+      <p class="subtitle" style="margin:0 0 10px">シャンパンなど、値段をこちらで直接決めるお酒</p>
+      <div class="form-grid">
+        <div><label>品目名</label><input type="text" id="bottle-name" placeholder="例: モエ・エ・シャンドン"></div>
+        <div>
+          <label>ジャンル(必須)</label>
+          <select id="bottle-category"><option value="">選択してください</option></select>
+        </div>
+        <div><label>値段(円)</label><input type="number" id="bottle-price" placeholder="例: 12000"></div>
+        <div><button class="btn-primary" id="bottle-add" style="width:100%">追加</button></div>
+      </div>
+    </div>
+    <div id="bottle-groups"></div>
+  </div>
+</div>
+
+<script>
+// ---- shared jsonbin.io backend (same bin as reservation app, different key) ----
+const BIN_ID = "6a843737da38895dfef24f99";
+const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
+const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+
+let fullRecord = {};
+let menu = { dishes: [], liquors: [], bottles: [] };
+let nextId = 1;
+let loaded = false;
+
+const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク"];
+const BOTTLE_CATEGORIES = ["ワイン","シャンパン","その他"];
+
+function populateCategorySelects() {
+  const liqSel = document.getElementById("liq-category");
+  LIQUOR_CATEGORIES.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; liqSel.appendChild(o); });
+  const botSel = document.getElementById("bottle-category");
+  BOTTLE_CATEGORIES.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; botSel.appendChild(o); });
+}
+populateCategorySelects();
+
+function groupByCategory(items, categoryOrder, priceKey) {
+  const groups = {};
+  items.forEach(i => {
+    const cat = i.category || "未分類";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(i);
+  });
+  Object.keys(groups).forEach(cat => groups[cat].sort((a,b) => (a[priceKey]||0) - (b[priceKey]||0)));
+  const orderedCats = [...categoryOrder, ...Object.keys(groups).filter(c => !categoryOrder.includes(c))];
+  return orderedCats.filter(c => groups[c]).map(c => ({ category: c, items: groups[c] }));
+}
+
+function setSync(state, text) {
+  const dot = document.getElementById("sync-dot");
+  const label = document.getElementById("sync-text");
+  dot.className = "sync-dot" + (state ? " " + state : "");
+  label.textContent = text;
+}
+
+async function loadData() {
+  setSync("syncing", "読み込み中...");
+  try {
+    const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
+    if (!res.ok) throw new Error("load failed");
+    const json = await res.json();
+    fullRecord = json.record || {};
+    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
+    const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles].map(i => i.id || 0);
+    nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
+    loaded = true;
+    setSync("", "同期済み(全員で共有中)");
+  } catch (e) {
+    setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+  }
+  renderAll();
+}
+
+async function saveData() {
+  setSync("syncing", "保存中...");
+  try {
+    fullRecord.menuItems = menu;
+    const res = await fetch(BASE_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
+      body: JSON.stringify(fullRecord)
+    });
+    if (!res.ok) throw new Error("save failed");
+    setSync("", "同期済み(全員で共有中)");
+  } catch (e) {
+    setSync("error", "保存エラー、通信状況を確認してください");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function yen(n) { return "¥" + Math.round(n).toLocaleString(); }
+
+// ---- tab switching ----
+const tabs = { dish: "tab-dish", liquor: "tab-liquor", bottle: "tab-bottle" };
+const views = { dish: "view-dish", liquor: "view-liquor", bottle: "view-bottle" };
+Object.keys(tabs).forEach(key => {
+  document.getElementById(tabs[key]).addEventListener("click", () => switchTab(key));
+});
+function switchTab(active) {
+  Object.keys(tabs).forEach(key => {
+    document.getElementById(tabs[key]).classList.toggle("active", key === active);
+    document.getElementById(views[key]).style.display = key === active ? "" : "none";
+  });
+}
+
+// ---- 料理 ----
+document.getElementById("dish-add").addEventListener("click", () => {
+  const name = document.getElementById("dish-name").value.trim();
+  const price = parseFloat(document.getElementById("dish-price").value);
+  if (!name || !price) { return; }
+  menu.dishes.push({ id: nextId++, name, price });
+  document.getElementById("dish-name").value = "";
+  document.getElementById("dish-price").value = "";
+  renderAll();
+  saveData();
+});
+
+// ---- お酒(ボトル) ----
+document.getElementById("bottle-add").addEventListener("click", () => {
+  const name = document.getElementById("bottle-name").value.trim();
+  const category = document.getElementById("bottle-category").value;
+  const price = parseFloat(document.getElementById("bottle-price").value);
+  if (!name || !category || !price) { alert("品目名・ジャンル・値段はすべて入力してください"); return; }
+  menu.bottles.push({ id: nextId++, name, category, price });
+  document.getElementById("bottle-name").value = "";
+  document.getElementById("bottle-category").value = "";
+  document.getElementById("bottle-price").value = "";
+  renderAll();
+  saveData();
+});
+
+// ---- お酒 計算 ----
+function calcLiquor(bottleMl, pourMl, bottlePrice) {
+  const pours = bottleMl / pourMl;
+  const costPerPour = bottlePrice / pours;
+  const price8x = costPerPour * 8; // 原価率12.5% = 1/8
+  let sellPrice;
+  if (price8x <= 700) {
+    sellPrice = 700;
+  } else {
+    sellPrice = Math.round(price8x / 100) * 100;
+  }
+  return { pours, costPerPour, price8x, sellPrice };
+}
+
+function updateLiquorPreview() {
+  const bottleMl = parseFloat(document.getElementById("liq-bottle-ml").value);
+  const pourMl = parseFloat(document.getElementById("liq-pour-ml").value);
+  const bottlePrice = parseFloat(document.getElementById("liq-bottle-price").value);
+  const box = document.getElementById("liq-preview");
+  if (!bottleMl || !pourMl || !bottlePrice) {
+    box.innerHTML = "数字を入力すると自動でここに計算結果が出ます";
+    return;
+  }
+  const c = calcLiquor(bottleMl, pourMl, bottlePrice);
+  box.innerHTML = `
+    このボトルから <b>${c.pours.toFixed(1)}杯</b> とれます。1杯あたりの原価は <b>${yen(c.costPerPour)}</b>。<br>
+    原価率12.5%換算(8倍)だと <b>${yen(c.price8x)}</b> &rarr; 販売価格は <span class="sell-price">${yen(c.sellPrice)}</span>
+  `;
+}
+["liq-bottle-ml","liq-pour-ml","liq-bottle-price"].forEach(id => {
+  document.getElementById(id).addEventListener("input", updateLiquorPreview);
+});
+
+document.getElementById("liq-add").addEventListener("click", () => {
+  const name = document.getElementById("liq-name").value.trim();
+  const category = document.getElementById("liq-category").value;
+  const bottleMl = parseFloat(document.getElementById("liq-bottle-ml").value);
+  const pourMl = parseFloat(document.getElementById("liq-pour-ml").value);
+  const bottlePrice = parseFloat(document.getElementById("liq-bottle-price").value);
+  if (!name || !category || !bottleMl || !pourMl || !bottlePrice) { alert("名前・ジャンル・数値はすべて入力してください"); return; }
+  const c = calcLiquor(bottleMl, pourMl, bottlePrice);
+  menu.liquors.push({
+    id: nextId++, name, category, bottleMl, pourMl, bottlePrice,
+    costPerPour: c.costPerPour, price8x: c.price8x, sellPrice: c.sellPrice
+  });
+  document.getElementById("liq-name").value = "";
+  document.getElementById("liq-category").value = "";
+  document.getElementById("liq-bottle-ml").value = "";
+  document.getElementById("liq-pour-ml").value = "";
+  document.getElementById("liq-bottle-price").value = "";
+  updateLiquorPreview();
+  renderAll();
+  saveData();
+});
+
+// ---- delete ----
+function deleteItem(category, id) {
+  menu[category] = menu[category].filter(i => i.id !== id);
+  renderAll();
+  saveData();
+}
+
+// ---- render ----
+function renderAll() {
+  renderDish();
+  renderLiquor();
+  renderBottle();
+}
+function renderDish() {
+  const tbody = document.querySelector("#dish-table tbody");
+  if (!loaded) { tbody.innerHTML = ""; return; }
+  if (menu.dishes.length === 0) { tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">まだ登録がありません</td></tr>`; return; }
+  tbody.innerHTML = menu.dishes.map(d => `
+    <tr>
+      <td class="item-name">${escapeHtml(d.name)}</td>
+      <td>${yen(d.price)}</td>
+      <td><button class="btn-del" onclick="deleteItem('dishes', ${d.id})">削除</button></td>
+    </tr>
+  `).join("");
+}
+function renderBottle() {
+  const wrap = document.getElementById("bottle-groups");
+  if (!loaded) { wrap.innerHTML = ""; return; }
+  if (menu.bottles.length === 0) { wrap.innerHTML = `<div class="empty-msg">まだ登録がありません</div>`; return; }
+  const groups = groupByCategory(menu.bottles, BOTTLE_CATEGORIES, "price");
+  wrap.innerHTML = groups.map(g => `
+    <h3 style="font-size:13px; margin:16px 0 6px;">${escapeHtml(g.category)}</h3>
+    <table><thead><tr><th>品目名</th><th>値段</th><th></th></tr></thead><tbody>
+      ${g.items.map(b => `
+        <tr>
+          <td class="item-name">${escapeHtml(b.name)}</td>
+          <td>${yen(b.price)}</td>
+          <td><button class="btn-del" onclick="deleteItem('bottles', ${b.id})">削除</button></td>
+        </tr>
+      `).join("")}
+    </tbody></table>
+  `).join("");
+}
+function renderLiquor() {
+  const wrap = document.getElementById("liquor-groups");
+  if (!loaded) { wrap.innerHTML = ""; return; }
+  if (menu.liquors.length === 0) { wrap.innerHTML = `<div class="empty-msg">まだ登録がありません</div>`; return; }
+  const groups = groupByCategory(menu.liquors, LIQUOR_CATEGORIES, "sellPrice");
+  wrap.innerHTML = groups.map(g => `
+    <h3 style="font-size:13px; margin:16px 0 6px;">${escapeHtml(g.category)}</h3>
+    <table><thead><tr><th>名前</th><th>1杯原価</th><th>8倍(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
+      ${g.items.map(l => `
+        <tr>
+          <td class="item-name">${escapeHtml(l.name)}</td>
+          <td>${yen(l.costPerPour)}</td>
+          <td>${yen(l.price8x)}</td>
+          <td><b>${yen(l.sellPrice)}</b></td>
+          <td><button class="btn-del" onclick="deleteItem('liquors', ${l.id})">削除</button></td>
+        </tr>
+      `).join("")}
+    </tbody></table>
+  `).join("");
+}
+
+loadData();
+</script>
+</body>
+</html>

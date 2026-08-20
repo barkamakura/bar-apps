@@ -1,0 +1,16 @@
+{
+  "name": "Bar KAMAKURA 業務アプリ",
+  "short_name": "Bar KAMAKURA",
+  "description": "値段確認・伝票・売上記録",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#b0e2f5",
+  "theme_color": "#b0e2f5",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
