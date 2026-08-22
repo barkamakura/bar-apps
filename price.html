@@ -79,8 +79,8 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 
 <div class="app">
   <h1>Bar KAMAKURA 値段確認</h1>
-  <p class="subtitle">料理・お酒の品目と値段を記録します(原価率12.5%で自動計算)</p>
-  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span></div>
+  <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率12.5%で自動計算)</p>
+  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
 
   <div class="tab-row">
     <button id="tab-dish" class="active">料理</button>
@@ -113,8 +113,9 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
         </div>
         <div><label>1本の容量(ml)</label><input type="number" id="liq-bottle-ml" placeholder="例: 720"></div>
         <div><label>1杯の量(ml)</label><input type="number" id="liq-pour-ml" placeholder="例: 30"></div>
-        <div><label>1本の値段(円)</label><input type="number" id="liq-bottle-price" placeholder="例: 2400"></div>
+        <div><label>1本の値段(税抜・円)</label><input type="number" id="liq-bottle-price" placeholder="例: 2400"></div>
       </div>
+      <p class="subtitle" style="margin:10px 0 0; font-size:12px;">※「1本の値段」は<b>税抜(本体価格)</b>を入力してください。仕入書のとおりの金額でOKです。消費税10%はアプリが自動で足して計算します。</p>
       <div class="preview-box" id="liq-preview">数字を入力すると自動でここに計算結果が出ます</div>
       <div style="margin-top:12px"><button class="btn-primary" id="liq-add">この内容で追加</button></div>
     </div>
@@ -202,6 +203,9 @@ async function loadData() {
 async function saveData() {
   setSync("syncing", "保存中...");
   try {
+    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
+    if (!res0.ok) throw new Error("reload failed");
+    fullRecord = (await res0.json()).record || {};
     fullRecord.menuItems = menu;
     const res = await fetch(BASE_URL, {
       method: "PUT",
@@ -260,9 +264,14 @@ document.getElementById("bottle-add").addEventListener("click", () => {
 });
 
 // ---- お酒 計算 ----
+// 酒類の消費税率(軽減税率の対象外なので10%)。税率が変わったらここだけ直す。
+const TAX_RATE = 0.10;
+
+// bottlePrice は「税抜(本体価格)」で受け取り、税込に直してから原価を出す
 function calcLiquor(bottleMl, pourMl, bottlePrice) {
   const pours = bottleMl / pourMl;
-  const costPerPour = bottlePrice / pours;
+  const bottlePriceIncTax = bottlePrice * (1 + TAX_RATE);
+  const costPerPour = bottlePriceIncTax / pours;
   const price8x = costPerPour * 8; // 原価率12.5% = 1/8
   let sellPrice;
   if (price8x <= 700) {
@@ -270,7 +279,7 @@ function calcLiquor(bottleMl, pourMl, bottlePrice) {
   } else {
     sellPrice = Math.round(price8x / 100) * 100;
   }
-  return { pours, costPerPour, price8x, sellPrice };
+  return { pours, bottlePriceIncTax, costPerPour, price8x, sellPrice };
 }
 
 function updateLiquorPreview() {
@@ -284,7 +293,8 @@ function updateLiquorPreview() {
   }
   const c = calcLiquor(bottleMl, pourMl, bottlePrice);
   box.innerHTML = `
-    このボトルから <b>${c.pours.toFixed(1)}杯</b> とれます。1杯あたりの原価は <b>${yen(c.costPerPour)}</b>。<br>
+    税抜 <b>${yen(bottlePrice)}</b> &rarr; 税込(10%) <b>${yen(c.bottlePriceIncTax)}</b><br>
+    このボトルから <b>${c.pours.toFixed(1)}杯</b> とれます。1杯あたりの原価(税込)は <b>${yen(c.costPerPour)}</b>。<br>
     原価率12.5%換算(8倍)だと <b>${yen(c.price8x)}</b> &rarr; 販売価格は <span class="sell-price">${yen(c.sellPrice)}</span>
   `;
 }
@@ -302,6 +312,7 @@ document.getElementById("liq-add").addEventListener("click", () => {
   const c = calcLiquor(bottleMl, pourMl, bottlePrice);
   menu.liquors.push({
     id: nextId++, name, category, bottleMl, pourMl, bottlePrice,
+    taxRate: TAX_RATE, bottlePriceIncTax: c.bottlePriceIncTax,
     costPerPour: c.costPerPour, price8x: c.price8x, sellPrice: c.sellPrice
   });
   document.getElementById("liq-name").value = "";
@@ -364,7 +375,7 @@ function renderLiquor() {
   const groups = groupByCategory(menu.liquors, LIQUOR_CATEGORIES, "sellPrice");
   wrap.innerHTML = groups.map(g => `
     <h3 style="font-size:13px; margin:16px 0 6px;">${escapeHtml(g.category)}</h3>
-    <table><thead><tr><th>名前</th><th>1杯原価</th><th>8倍(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>名前</th><th>1杯原価(税込)</th><th>8倍(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
       ${g.items.map(l => `
         <tr>
           <td class="item-name">${escapeHtml(l.name)}</td>
@@ -378,6 +389,7 @@ function renderLiquor() {
   `).join("");
 }
 
+document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
 loadData();
 </script>
 </body>
