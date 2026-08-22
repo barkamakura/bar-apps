@@ -80,7 +80,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 <div class="app">
   <h1>Bar KAMAKURA 値段確認</h1>
   <p class="subtitle">料理・お酒の品目と値段を記録します(原価率12.5%で自動計算)</p>
-  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span></div>
+  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
 
   <div class="tab-row">
     <button id="tab-dish" class="active">料理</button>
@@ -202,6 +202,9 @@ async function loadData() {
 async function saveData() {
   setSync("syncing", "保存中...");
   try {
+    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
+    if (!res0.ok) throw new Error("reload failed");
+    fullRecord = (await res0.json()).record || {};
     fullRecord.menuItems = menu;
     const res = await fetch(BASE_URL, {
       method: "PUT",
@@ -364,7 +367,7 @@ function renderLiquor() {
   const groups = groupByCategory(menu.liquors, LIQUOR_CATEGORIES, "sellPrice");
   wrap.innerHTML = groups.map(g => `
     <h3 style="font-size:13px; margin:16px 0 6px;">${escapeHtml(g.category)}</h3>
-    <table><thead><tr><th>名前</th><th>1杯原価</th><th>8倍(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>名前</th><th>1杯原価</th><th>8倌(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
       ${g.items.map(l => `
         <tr>
           <td class="item-name">${escapeHtml(l.name)}</td>
@@ -378,6 +381,7 @@ function renderLiquor() {
   `).join("");
 }
 
+document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
 loadData();
 </script>
 </body>

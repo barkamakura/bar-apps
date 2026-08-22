@@ -115,7 +115,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 <div class="app">
   <h1>Bar KAMAKURA 伝票</h1>
   <p class="subtitle">卓を選んで新規伝票を作成、または対応中の伝票を開きます</p>
-  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span></div>
+  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
 
   <div id="view-tables">
     <div class="panel">
@@ -234,6 +234,9 @@ async function loadData() {
 async function saveData() {
   setSync("syncing", "保存中...");
   try {
+    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
+    if (!res0.ok) throw new Error("reload failed");
+    fullRecord = (await res0.json()).record || {};
     fullRecord.slips = slips;
     const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
     if (!res.ok) throw new Error("save failed");
@@ -655,6 +658,7 @@ function confirmCustomOrder() {
   renderItemPicker();
 }
 
+document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
 loadData();
 </script>
 </body>
