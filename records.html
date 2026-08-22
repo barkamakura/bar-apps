@@ -174,9 +174,6 @@ async function loadData() {
 async function saveData() {
   setSync("syncing", "保存中...");
   try {
-    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("reload failed");
-    fullRecord = (await res0.json()).record || {};
     fullRecord.slips = [...(fullRecord.slips || []).filter(s => s.status !== "paid"), ...allSlips];
     fullRecord.deletedSlips = deletedSlips;
     const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
