@@ -79,7 +79,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 
 <div class="app">
   <h1>Bar KAMAKURA 値段確認</h1>
-  <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率20%で自動計算)</p>
+  <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率17.5%で自動計算)</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
 
   <div class="tab-row">
@@ -267,10 +267,12 @@ document.getElementById("bottle-add").addEventListener("click", () => {
 // 酒類の消費税率(軽減税率の対象外なので10%)。税率が変わったらここだけ直す。
 const TAX_RATE = 0.10;
 
-// 原価率。0.20 = 20% → 販売価格は原価の5倍。ここを変えれば計算も表示も全部変わる。
-const COST_RATE = 0.20;
-const MULTIPLIER = 1 / COST_RATE;           // 5
-const RATE_LABEL = `原価率${(COST_RATE * 100).toFixed(0)}%換算(${MULTIPLIER}倍)`;
+// 原価率。0.175 = 17.5% → 販売価格は原価の約5.7倍。ここを変えれば計算も表示も全部変わる。
+const COST_RATE = 0.175;
+const MULTIPLIER = 1 / COST_RATE;                              // 5.714...
+const MULT_LABEL = (Math.round(MULTIPLIER * 10) / 10).toString(); // 表示用: 5.7
+const RATE_LABEL_PCT = (Math.round(COST_RATE * 1000) / 10).toString(); // 表示用: 17.5
+const RATE_LABEL = `原価率${RATE_LABEL_PCT}%換算(約${MULT_LABEL}倍)`;
 
 // bottlePrice は「税抜(本体価格)」で受け取り、税込に直してから原価を出す
 function calcLiquor(bottleMl, pourMl, bottlePrice) {
@@ -381,7 +383,7 @@ function renderLiquor() {
   const groups = groupByCategory(menu.liquors, LIQUOR_CATEGORIES, "sellPrice");
   wrap.innerHTML = groups.map(g => `
     <h3 style="font-size:13px; margin:16px 0 6px;">${escapeHtml(g.category)}</h3>
-    <table><thead><tr><th>名前</th><th>1杯原価(税込)</th><th>${MULTIPLIER}倍(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>名前</th><th>1杯原価(税込)</th><th>約${MULT_LABEL}倍(参考)</th><th>販売価格</th><th></th></tr></thead><tbody>
       ${g.items.map(l => `
         <tr>
           <td class="item-name">${escapeHtml(l.name)}</td>
