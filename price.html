@@ -86,6 +86,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
     <button id="tab-dish" class="active">料理</button>
     <button id="tab-liquor">お酒</button>
     <button id="tab-bottle">お酒(ボトル)</button>
+    <button id="tab-cocktail">おすすめカクテル</button>
   </div>
 
   <!-- 料理 -->
@@ -101,6 +102,20 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
     <table id="dish-table"><thead><tr><th>品目名</th><th>値段</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 
+  <!-- おすすめカクテル -->
+  <div id="view-cocktail" style="display:none">
+    <div class="panel">
+      <h2>おすすめカクテルを追加</h2>
+      <p class="subtitle" style="margin:0 0 10px">伝票アプリの「おすすめカクテル/シェイクカクテル」欄は800円〜1500円から金額を選ぶ形式のため、こちらは値段確認用の参考リストです。</p>
+      <div class="form-grid">
+        <div><label>カクテル名</label><input type="text" id="cocktail-name" placeholder="例: モヒート"></div>
+        <div><label>値段(円)</label><input type="number" id="cocktail-price" placeholder="例: 1000"></div>
+        <div><button class="btn-primary" id="cocktail-add" style="width:100%">追加</button></div>
+      </div>
+    </div>
+    <table id="cocktail-table"><thead><tr><th>カクテル名</th><th>値段</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
   <!-- お酒 -->
   <div id="view-liquor" style="display:none">
     <div class="panel">
@@ -111,12 +126,33 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
           <label>ジャンル(必須)</label>
           <select id="liq-category"><option value="">選択してください</option></select>
         </div>
+      </div>
+
+      <!-- 通常のジャンル: 原価から自動計算 -->
+      <div id="liq-fields-normal" class="form-grid" style="margin-top:10px">
         <div><label>1本の容量(ml)</label><input type="number" id="liq-bottle-ml" placeholder="例: 720"></div>
         <div><label>1杯の量(ml)</label><input type="number" id="liq-pour-ml" placeholder="例: 30"></div>
         <div><label>1本の値段(税抜・円)</label><input type="number" id="liq-bottle-price" placeholder="例: 2400"></div>
       </div>
-      <p class="subtitle" style="margin:10px 0 0; font-size:12px;">※「1本の値段」は<b>税抜(本体価格)</b>を入力してください。仕入書のとおりの金額でOKです。消費税10%はアプリが自動で足して計算します。</p>
+      <p id="liq-normal-note" class="subtitle" style="margin:10px 0 0; font-size:12px;">※「1本の値段」は<b>税抜(本体価格)</b>を入力してください。仕入書のとおりの金額でOKです。消費税10%はアプリが自動で足して計算します。</p>
       <div class="preview-box" id="liq-preview">数字を入力すると自動でここに計算結果が出ます</div>
+
+      <!-- ソフトドリンク: 600円 or 800円 を選択 -->
+      <div id="liq-fields-soft" class="form-grid" style="margin-top:10px; display:none">
+        <div>
+          <label>値段(600円 or 800円)</label>
+          <select id="liq-soft-price">
+            <option value="600">600円</option>
+            <option value="800">800円</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ホットドリンク: 500円固定 -->
+      <div id="liq-fields-hot" style="margin-top:10px; display:none">
+        <p class="subtitle" style="margin:0; font-size:12px;">ホットドリンクは全品 <b>500円固定</b> です。名前を入力して追加してください。</p>
+      </div>
+
       <div style="margin-top:12px"><button class="btn-primary" id="liq-add">この内容で追加</button></div>
     </div>
     <div id="liquor-groups"></div>
@@ -148,7 +184,7 @@ const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
 const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
 let fullRecord = {};
-let menu = { dishes: [], liquors: [], bottles: [] };
+let menu = { dishes: [], liquors: [], bottles: [], cocktails: [] };
 let nextId = 1;
 let loaded = false;
 
@@ -197,8 +233,9 @@ async function loadData() {
     if (!res.ok) throw new Error("load failed");
     const json = await res.json();
     fullRecord = json.record || {};
-    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
-    const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles].map(i => i.id || 0);
+    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [] };
+    if (!menu.cocktails) menu.cocktails = [];
+    const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails].map(i => i.id || 0);
     nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
     loaded = true;
     setSync("", "同期済み(全員で共有中)");
@@ -233,8 +270,8 @@ function escapeHtml(s) {
 function yen(n) { return "¥" + Math.round(n).toLocaleString(); }
 
 // ---- tab switching ----
-const tabs = { dish: "tab-dish", liquor: "tab-liquor", bottle: "tab-bottle" };
-const views = { dish: "view-dish", liquor: "view-liquor", bottle: "view-bottle" };
+const tabs = { dish: "tab-dish", liquor: "tab-liquor", bottle: "tab-bottle", cocktail: "tab-cocktail" };
+const views = { dish: "view-dish", liquor: "view-liquor", bottle: "view-bottle", cocktail: "view-cocktail" };
 Object.keys(tabs).forEach(key => {
   document.getElementById(tabs[key]).addEventListener("click", () => switchTab(key));
 });
@@ -253,6 +290,18 @@ document.getElementById("dish-add").addEventListener("click", () => {
   menu.dishes.push({ id: nextId++, name, price });
   document.getElementById("dish-name").value = "";
   document.getElementById("dish-price").value = "";
+  renderAll();
+  saveData();
+});
+
+// ---- おすすめカクテル ----
+document.getElementById("cocktail-add").addEventListener("click", () => {
+  const name = document.getElementById("cocktail-name").value.trim();
+  const price = parseFloat(document.getElementById("cocktail-price").value);
+  if (!name || !price) { return; }
+  menu.cocktails.push({ id: nextId++, name, price });
+  document.getElementById("cocktail-name").value = "";
+  document.getElementById("cocktail-price").value = "";
   renderAll();
   saveData();
 });
@@ -317,25 +366,63 @@ function updateLiquorPreview() {
   document.getElementById(id).addEventListener("input", updateLiquorPreview);
 });
 
+// ジャンルによって入力欄を切り替える(ソフトドリンク=600/800円選択、ホットドリンク=500円固定、それ以外=原価計算)
+const SOFT_DRINK_CATEGORY = "ソフトドリンク";
+const HOT_DRINK_CATEGORY = "ホットドリンク";
+const HOT_DRINK_PRICE = 500;
+
+function updateLiquorFieldsForCategory() {
+  const category = document.getElementById("liq-category").value;
+  const normal = document.getElementById("liq-fields-normal");
+  const soft = document.getElementById("liq-fields-soft");
+  const hot = document.getElementById("liq-fields-hot");
+  const note = document.getElementById("liq-normal-note");
+  const preview = document.getElementById("liq-preview");
+  if (category === SOFT_DRINK_CATEGORY) {
+    normal.style.display = "none"; note.style.display = "none"; preview.style.display = "none";
+    soft.style.display = ""; hot.style.display = "none";
+  } else if (category === HOT_DRINK_CATEGORY) {
+    normal.style.display = "none"; note.style.display = "none"; preview.style.display = "none";
+    soft.style.display = "none"; hot.style.display = "";
+  } else {
+    normal.style.display = ""; note.style.display = ""; preview.style.display = "";
+    soft.style.display = "none"; hot.style.display = "none";
+  }
+}
+document.getElementById("liq-category").addEventListener("change", updateLiquorFieldsForCategory);
+updateLiquorFieldsForCategory();
+
 document.getElementById("liq-add").addEventListener("click", () => {
   const name = document.getElementById("liq-name").value.trim();
   const category = document.getElementById("liq-category").value;
-  const bottleMl = parseFloat(document.getElementById("liq-bottle-ml").value);
-  const pourMl = parseFloat(document.getElementById("liq-pour-ml").value);
-  const bottlePrice = parseFloat(document.getElementById("liq-bottle-price").value);
-  if (!name || !category || !bottleMl || !pourMl || !bottlePrice) { alert("名前・ジャンル・数値はすべて入力してください"); return; }
-  const c = calcLiquor(bottleMl, pourMl, bottlePrice);
-  menu.liquors.push({
-    id: nextId++, name, category, bottleMl, pourMl, bottlePrice,
-    taxRate: TAX_RATE, bottlePriceIncTax: c.bottlePriceIncTax,
-    costRate: COST_RATE, costPerPour: c.costPerPour,
-    priceMultiplied: c.priceMultiplied, sellPrice: c.sellPrice
-  });
+  if (!name || !category) { alert("名前・ジャンルはすべて入力してください"); return; }
+
+  if (category === SOFT_DRINK_CATEGORY) {
+    const sellPrice = parseFloat(document.getElementById("liq-soft-price").value);
+    menu.liquors.push({ id: nextId++, name, category, sellPrice, fixedPrice: true });
+  } else if (category === HOT_DRINK_CATEGORY) {
+    menu.liquors.push({ id: nextId++, name, category, sellPrice: HOT_DRINK_PRICE, fixedPrice: true });
+  } else {
+    const bottleMl = parseFloat(document.getElementById("liq-bottle-ml").value);
+    const pourMl = parseFloat(document.getElementById("liq-pour-ml").value);
+    const bottlePrice = parseFloat(document.getElementById("liq-bottle-price").value);
+    if (!bottleMl || !pourMl || !bottlePrice) { alert("数値はすべて入力してください"); return; }
+    const c = calcLiquor(bottleMl, pourMl, bottlePrice);
+    menu.liquors.push({
+      id: nextId++, name, category, bottleMl, pourMl, bottlePrice,
+      taxRate: TAX_RATE, bottlePriceIncTax: c.bottlePriceIncTax,
+      costRate: COST_RATE, costPerPour: c.costPerPour,
+      priceMultiplied: c.priceMultiplied, sellPrice: c.sellPrice
+    });
+  }
+
   document.getElementById("liq-name").value = "";
   document.getElementById("liq-category").value = "";
   document.getElementById("liq-bottle-ml").value = "";
   document.getElementById("liq-pour-ml").value = "";
   document.getElementById("liq-bottle-price").value = "";
+  document.getElementById("liq-soft-price").value = "600";
+  updateLiquorFieldsForCategory();
   updateLiquorPreview();
   renderAll();
   saveData();
@@ -353,6 +440,7 @@ function renderAll() {
   renderDish();
   renderLiquor();
   renderBottle();
+  renderCocktail();
 }
 function renderDish() {
   const tbody = document.querySelector("#dish-table tbody");
@@ -363,6 +451,18 @@ function renderDish() {
       <td class="item-name">${escapeHtml(d.name)}</td>
       <td>${yen(d.price)}</td>
       <td><button class="btn-del" onclick="deleteItem('dishes', ${d.id})">削除</button></td>
+    </tr>
+  `).join("");
+}
+function renderCocktail() {
+  const tbody = document.querySelector("#cocktail-table tbody");
+  if (!loaded) { tbody.innerHTML = ""; return; }
+  if (menu.cocktails.length === 0) { tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">まだ登録がありません</td></tr>`; return; }
+  tbody.innerHTML = menu.cocktails.map(c => `
+    <tr>
+      <td class="item-name">${escapeHtml(c.name)}</td>
+      <td>${yen(c.price)}</td>
+      <td><button class="btn-del" onclick="deleteItem('cocktails', ${c.id})">削除</button></td>
     </tr>
   `).join("");
 }
@@ -395,8 +495,8 @@ function renderLiquor() {
       ${g.items.map(l => `
         <tr>
           <td class="item-name">${escapeHtml(l.name)}</td>
-          <td>${yen(l.costPerPour)}</td>
-          <td>${yen(l.priceMultiplied != null ? l.priceMultiplied : l.price8x)}</td>
+          <td>${l.fixedPrice ? "-" : yen(l.costPerPour)}</td>
+          <td>${l.fixedPrice ? "-" : yen(l.priceMultiplied != null ? l.priceMultiplied : l.price8x)}</td>
           <td><b>${yen(l.sellPrice)}</b></td>
           <td><button class="btn-del" onclick="deleteItem('liquors', ${l.id})">削除</button></td>
         </tr>

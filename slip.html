@@ -60,6 +60,7 @@
   button.btn-primary:hover { opacity: 0.9; }
   button.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   button.btn-ghost { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); cursor: pointer; font-size: 13px; border-radius: 8px; padding: 9px 14px; }
+  button.btn-ghost.active { background: var(--accent); color: white; border-color: var(--accent); }
   button.btn-danger-outline { background: transparent; color: var(--danger); border: 1px solid var(--danger); cursor: pointer; font-size: 12px; border-radius: 8px; padding: 5px 10px; }
   button.btn-paid { background: var(--good); color: white; border: none; border-radius: 8px; padding: 11px 20px; font-weight: 700; font-size: 14px; cursor: pointer; }
   button.btn-paid:disabled { opacity: 0.7; cursor: default; }
@@ -173,6 +174,8 @@ const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 const CHARGE_PER_PERSON = 500;
 const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク","シャンパン"];
+const BOTTLE_CATEGORIES = ["ワイン","シャンパン","その他"];
+const COCKTAIL_PRICE_OPTIONS = [800,900,1000,1100,1200,1300,1400,1500];
 
 // 五十音順の並べ替え用(ひらがな・カタカナを同じ扱いにし、数字も自然な順に)
 const JA_COLLATOR = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
@@ -437,7 +440,8 @@ function confirmStaged() {
   saveData();
 }
 function renderItemPicker() {
-  const liquorItems = [...menu.liquors.map(l => ({...l, cat:"liquor"})), ...menu.bottles.map(b => ({...b, cat:"bottle"}))];
+  const liquorItems = menu.liquors.map(l => ({...l, cat:"liquor"}));
+  const bottleItems = menu.bottles.map(b => ({...b, cat:"bottle"}));
   const dishItems = menu.dishes.map(d => ({...d, cat:"dish"}));
   const modal = document.getElementById("item-picker-modal");
   modal.innerHTML = `
@@ -446,18 +450,33 @@ function renderItemPicker() {
         <h3>品目を選んで追加</h3>
         <div class="item-tab-row">
           <button class="${activeItemTab==='liquor' ? 'active':''}" onclick="pickerSetTab('liquor')">お酒</button>
+          <button class="${activeItemTab==='bottle' ? 'active':''}" onclick="pickerSetTab('bottle')">お酒(ボトル)</button>
           <button class="${activeItemTab==='dish' ? 'active':''}" onclick="pickerSetTab('dish')">料理・おつまみ</button>
         </div>
         ${activeItemTab === 'liquor'
           ? groupByCategory(liquorItems, LIQUOR_CATEGORIES).map(g => `
               <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
               <div class="item-grid">
-                ${g.items.map(i => `<button class="item-tile" onclick='onItemTap(${JSON.stringify(i.id)}, "${i.cat}")'><b>${escapeHtml(i.name)}</b>${yen(i.cat==='bottle'?i.price:i.sellPrice)}</button>`).join("")}
+                ${g.items.map(i => `<button class="item-tile" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}</b>${yen(i.sellPrice)}</button>`).join("")}
+              </div>
+            `).join("")
+          : activeItemTab === 'bottle'
+          ? groupByCategory(bottleItems, BOTTLE_CATEGORIES).map(g => `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
+              <div class="item-grid">
+                ${g.items.map(i => `<button class="item-tile" onclick='onItemTap(${JSON.stringify(i.id)}, "bottle")'><b>${escapeHtml(i.name)}</b>${yen(i.price)}</button>`).join("")}
               </div>
             `).join("")
           : `<div class="item-grid">${dishItems.map(i => `<button class="item-tile" onclick='onItemTap(${i.id}, "dish")'><b>${escapeHtml(i.name)}</b>${yen(i.price)}</button>`).join("")}</div>`
         }
-        ${(activeItemTab === 'liquor' ? liquorItems.length===0 : dishItems.length===0) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
+        ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'bottle' ? bottleItems.length===0 : dishItems.length===0) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
+
+        <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">カクテル</h4>
+        <div class="item-grid">
+          <button class="item-tile" onclick="openCocktailModal('recommend')"><b>おすすめカクテル</b>800円〜1500円</button>
+          <button class="item-tile" onclick="openCocktailModal('shake')"><b>シェイクカクテル</b>800円〜1500円</button>
+        </div>
+
         <div class="item-grid">
           <button class="item-tile custom-tile" onclick="openCustomModal()">＋ 複雑な注文</button>
         </div>
@@ -640,9 +659,48 @@ function confirmAddLiquor(liquorId) {
   closeModifierModal();
 }
 
+// ---- おすすめカクテル・シェイクカクテル(800円〜1500円を選択) ----
+function openCocktailModal(kind) {
+  const label = kind === 'recommend' ? 'おすすめカクテル' : 'シェイクカクテル';
+  modalState = { cocktailPrice: null };
+  const modal = document.getElementById("modifier-modal");
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModifierModal(event)">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <h3>${escapeHtml(label)}の金額を選択(必須)</h3>
+        <div class="choice-row" id="cocktail-price-row">
+          ${COCKTAIL_PRICE_OPTIONS.map(p => `<div class="choice-btn" id="cocktail-opt-${p}" onclick="pickCocktailPrice(${p})">${yen(p)}</div>`).join("")}
+        </div>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
+          <button class="btn-primary" id="cocktail-confirm-btn" disabled onclick="confirmCocktail('${label}')">この内容で追加</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function pickCocktailPrice(p) {
+  modalState.cocktailPrice = p;
+  COCKTAIL_PRICE_OPTIONS.forEach(o => {
+    document.getElementById(`cocktail-opt-${o}`).classList.toggle("selected", o === p);
+  });
+  document.getElementById("cocktail-confirm-btn").disabled = false;
+}
+function confirmCocktail(label) {
+  if (!modalState.cocktailPrice) return;
+  stagedItems.push({ id: nextItemId++, name: label, cat: "dish", price: modalState.cocktailPrice, mods: null, cancelled: false, orderedAt: new Date().toISOString() });
+  closeModifierModal();
+  renderItemPicker();
+}
+
 // ---- 複雑な注文(自由入力) ----
+let customMixerExtra = 0; // 割材の追加金額(0 / 100 / 200)
+let customMixerOpen = false;
+
 function openCustomModal() {
   const catLabel = activeItemTab === 'liquor' ? 'お酒' : '料理・おつまみ';
+  customMixerExtra = 0;
+  customMixerOpen = false;
   const modal = document.getElementById("modifier-modal");
   modal.innerHTML = `
     <div class="modal-backdrop" onclick="closeModifierModal(event)">
@@ -652,6 +710,13 @@ function openCustomModal() {
         <div style="margin-bottom:14px;"><input type="text" id="custom-desc-input" placeholder="例: 白ワインをロックで、多めに"></div>
         <label>金額(円)</label>
         <div style="margin-bottom:14px;"><input type="number" id="custom-price-input" placeholder="例: 900"></div>
+        <div style="margin-bottom:14px;">
+          <button type="button" class="btn-ghost" id="mixer-toggle-btn" onclick="toggleMixerOptions()">割材</button>
+          <div id="mixer-options" style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn-ghost mixer-opt-btn" data-extra="100" onclick="selectMixerExtra(100)">＋100円</button>
+            <button type="button" class="btn-ghost mixer-opt-btn" data-extra="200" onclick="selectMixerExtra(200)">＋200円</button>
+          </div>
+        </div>
         <div style="display:flex; gap:10px;">
           <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
           <button class="btn-primary" onclick="confirmCustomOrder()">この内容で追加</button>
@@ -660,11 +725,25 @@ function openCustomModal() {
     </div>
   `;
 }
+function toggleMixerOptions() {
+  customMixerOpen = !customMixerOpen;
+  const box = document.getElementById("mixer-options");
+  box.style.display = customMixerOpen ? "flex" : "none";
+}
+function selectMixerExtra(amount) {
+  customMixerExtra = (customMixerExtra === amount) ? 0 : amount; // もう一度押すと選択解除
+  document.querySelectorAll(".mixer-opt-btn").forEach(btn => {
+    const isSelected = parseInt(btn.dataset.extra, 10) === customMixerExtra;
+    btn.classList.toggle("active", isSelected);
+  });
+}
 function confirmCustomOrder() {
   const desc = document.getElementById("custom-desc-input").value.trim();
-  const price = parseFloat(document.getElementById("custom-price-input").value);
-  if (!desc || !price) { return; }
-  stagedItems.push({ id: nextItemId++, name: desc, cat: activeItemTab === 'liquor' ? 'liquor' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() });
+  const basePrice = parseFloat(document.getElementById("custom-price-input").value);
+  if (!desc || !basePrice) { return; }
+  const price = basePrice + (customMixerExtra || 0);
+  const name = customMixerExtra ? `${desc}(割材+${customMixerExtra}円)` : desc;
+  stagedItems.push({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() });
   closeModifierModal();
   renderItemPicker();
 }
