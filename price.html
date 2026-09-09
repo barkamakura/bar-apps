@@ -148,9 +148,9 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
         </div>
       </div>
 
-      <!-- ホットドリンク: 500円固定 -->
+      <!-- ホットドリンク: 600円固定 -->
       <div id="liq-fields-hot" style="margin-top:10px; display:none">
-        <p class="subtitle" style="margin:0; font-size:12px;">ホットドリンクは全品 <b>500円固定</b> です。名前を入力して追加してください。</p>
+        <p class="subtitle" style="margin:0; font-size:12px;">ホットドリンクは全品 <b>600円固定</b> です。名前を入力して追加してください。</p>
       </div>
 
       <div style="margin-top:12px"><button class="btn-primary" id="liq-add">この内容で追加</button></div>
@@ -239,10 +239,24 @@ async function loadData() {
     nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
     loaded = true;
     setSync("", "同期済み(全員で共有中)");
+    migrateHotDrinkPrices();
   } catch (e) {
     setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
   }
   renderAll();
+}
+
+// ホットドリンクの値段を過去の登録分もまとめて最新の固定価格に揃える(古い500円などが残っていたら自動で600円に直す)
+function migrateHotDrinkPrices() {
+  let changed = false;
+  menu.liquors.forEach(l => {
+    if (l.category === HOT_DRINK_CATEGORY && l.sellPrice !== HOT_DRINK_PRICE) {
+      l.sellPrice = HOT_DRINK_PRICE;
+      l.fixedPrice = true;
+      changed = true;
+    }
+  });
+  if (changed) { saveData(); }
 }
 
 async function saveData() {
@@ -366,10 +380,10 @@ function updateLiquorPreview() {
   document.getElementById(id).addEventListener("input", updateLiquorPreview);
 });
 
-// ジャンルによって入力欄を切り替える(ソフトドリンク=600/800円選択、ホットドリンク=500円固定、それ以外=原価計算)
+// ジャンルによって入力欄を切り替える(ソフトドリンク=600/800円選択、ホットドリンク=600円固定、それ以外=原価計算)
 const SOFT_DRINK_CATEGORY = "ソフトドリンク";
 const HOT_DRINK_CATEGORY = "ホットドリンク";
-const HOT_DRINK_PRICE = 500;
+const HOT_DRINK_PRICE = 600;
 
 function updateLiquorFieldsForCategory() {
   const category = document.getElementById("liq-category").value;
