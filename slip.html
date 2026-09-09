@@ -174,6 +174,16 @@ const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 const CHARGE_PER_PERSON = 500;
 const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク","シャンパン"];
 
+// 五十音順の並べ替え用(ひらがな・カタカナを同じ扱いにし、数字も自然な順に)
+const JA_COLLATOR = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
+function itemPrice(i) { return (i.cat === 'bottle' ? i.price : i.sellPrice) || 0; }
+// まず値段の安い順、同じ値段どうしは五十音順(名前順)
+function byPriceThenNameJa(a, b) {
+  const d = itemPrice(a) - itemPrice(b);
+  if (d !== 0) return d;
+  return JA_COLLATOR.compare(a.name || "", b.name || "");
+}
+
 function groupByCategory(items, categoryOrder) {
   const groups = {};
   items.forEach(i => {
@@ -181,7 +191,8 @@ function groupByCategory(items, categoryOrder) {
     if (!groups[cat]) groups[cat] = [];
     groups[cat].push(i);
   });
-  Object.keys(groups).forEach(cat => groups[cat].sort((a,b) => (a.cat==='bottle'?a.price:a.sellPrice) - (b.cat==='bottle'?b.price:b.sellPrice)));
+  // ジャンルの中は「値段の安い順 → 同じ値段なら五十音順」に並べる
+  Object.keys(groups).forEach(cat => groups[cat].sort(byPriceThenNameJa));
   const orderedCats = [...categoryOrder, ...Object.keys(groups).filter(c => !categoryOrder.includes(c))];
   return orderedCats.filter(c => groups[c]).map(c => ({ category: c, items: groups[c] }));
 }
