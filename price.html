@@ -163,6 +163,9 @@ function populateCategorySelects() {
 }
 populateCategorySelects();
 
+// 五十音順の並べ替え用(ひらがな・カタカナを同じ扱いにし、数字も自然な順に)
+const JA_COLLATOR = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
+
 function groupByCategory(items, categoryOrder, priceKey) {
   const groups = {};
   items.forEach(i => {
@@ -170,7 +173,12 @@ function groupByCategory(items, categoryOrder, priceKey) {
     if (!groups[cat]) groups[cat] = [];
     groups[cat].push(i);
   });
-  Object.keys(groups).forEach(cat => groups[cat].sort((a,b) => (a[priceKey]||0) - (b[priceKey]||0)));
+  // ジャンルの中は「値段の安い順 → 同じ値段なら五十音順」に並べる(伝票アプリと同じ順番)
+  Object.keys(groups).forEach(cat => groups[cat].sort((a, b) => {
+    const d = (a[priceKey] || 0) - (b[priceKey] || 0);
+    if (d !== 0) return d;
+    return JA_COLLATOR.compare(a.name || "", b.name || "");
+  }));
   const orderedCats = [...categoryOrder, ...Object.keys(groups).filter(c => !categoryOrder.includes(c))];
   return orderedCats.filter(c => groups[c]).map(c => ({ category: c, items: groups[c] }));
 }
