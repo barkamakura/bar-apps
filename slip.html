@@ -161,8 +161,8 @@
   .nomi-panel h2 { color: #a1620a; }
   .nomi-note { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
   .nomi-warn { background: var(--danger-soft); color: var(--danger); border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; margin: 10px 0; }
-  .nomi-count-row { gap: 6px; }
-  .nomi-count-row .choice-btn { min-width: 46px; text-align: center; padding: 10px 0; }
+  .choice-btn.plan-nomi { border-color: #e8940c; color: #a1620a; font-weight: 700; }
+  .choice-btn.plan-nomi.selected { background: #e8940c; border-color: #e8940c; color: #fff; }
   .nomi-fee-line { font-size: 13px; line-height: 1.8; background: var(--surface-1); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
   .nomi-time { border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
   .nomi-time-idle { background: var(--surface-3); }
@@ -226,6 +226,16 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
         <label>人数を入力(10人以上)</label>
         <input type="number" id="count-input" min="10" placeholder="例: 12">
       </div>
+
+      <div id="plan-wrap" style="display:none; margin-bottom:16px;">
+        <label>プラン(必須)</label>
+        <div class="choice-row" id="plan-choice" style="margin-bottom:8px;">
+          <div class="choice-btn" data-val="normal">通常</div>
+          <div class="choice-btn plan-nomi" data-val="nomi">🍻 飲み放題</div>
+        </div>
+        <div class="nomi-fee-line" id="plan-note"></div>
+      </div>
+
       <label>任意項目</label>
       <div style="margin-bottom:16px;"><input type="text" id="note-input" placeholder="例: 誕生日のお客様"></div>
       <div style="display:flex; gap:10px;">
@@ -260,8 +270,7 @@ const COCKTAIL_PRICE_OPTIONS = [800,900,1000,1100,1200,1300,1400,1500];
 // ---- 飲み放題プラン ----
 const NOMI_PER_PERSON = 4000;          // 1人あたりの飲み放題料金(2時間)
 const NOMI_EXTEND_PER_PERSON = 2000;   // 延長1時間あたり1人の料金
-const NOMI_MIN_PEOPLE = 8;
-const NOMI_MAX_PEOPLE = 30;
+const NOMI_MIN_PEOPLE = 8;   // これ以上の人数でだけ飲み放題を選べる(上限なし)
 const NOMI_PRICE_LIMIT = 700;          // 飲み放題で頼めるお酒の上限(税込)
 const NOMI_MIXER_EXTRA = 100;          // 飲み放題で使える割材は「＋100円」のものだけ
 const NOMI_PLAN_MINUTES = 120;         // 基本は2時間
@@ -483,14 +492,14 @@ function selectTable(table) {
     showView("slip");
     renderSlipView();
   } else {
-    newSlipDraft = { type: null, count: null };
+    newSlipDraft = { type: null, count: null, plan: null, planPicked: false };
     document.getElementById("new-slip-title").textContent = "新規伝票 - " + table;
     document.querySelectorAll("#type-choice .choice-btn").forEach(b => b.classList.remove("selected"));
     document.querySelectorAll("#count-choice .choice-btn").forEach(b => b.classList.remove("selected"));
     document.getElementById("count-input-wrap").style.display = "none";
     document.getElementById("count-input").value = "";
     document.getElementById("note-input").value = "";
-    updateCreateBtn();
+    refreshPlanChoice();
     showView("new");
   }
 }
@@ -515,21 +524,60 @@ document.querySelectorAll("#count-choice .choice-btn").forEach(btn => {
     btn.classList.add("selected");
     if (btn.dataset.val === "input") {
       document.getElementById("count-input-wrap").style.display = "";
-      newSlipDraft.count = null;
+      setDraftCount(null);
     } else {
       document.getElementById("count-input-wrap").style.display = "none";
-      newSlipDraft.count = parseInt(btn.dataset.val, 10);
+      setDraftCount(parseInt(btn.dataset.val, 10));
     }
-    updateCreateBtn();
   });
 });
 document.getElementById("count-input").addEventListener("input", (e) => {
   const v = parseInt(e.target.value, 10);
-  newSlipDraft.count = v > 0 ? v : null;
-  updateCreateBtn();
+  setDraftCount(v > 0 ? v : null);
 });
+
+// ---- プラン(通常 / 飲み放題)の選択 ----
+// 人数が8名以上のときだけ選択欄を出す。人数を変えたら選び直してもらう。
+function setDraftCount(n) {
+  newSlipDraft.count = n;
+  if (n && n >= NOMI_MIN_PEOPLE) {
+    if (!newSlipDraft.planPicked) newSlipDraft.plan = null;
+  } else {
+    newSlipDraft.plan = "normal";
+    newSlipDraft.planPicked = false;
+  }
+  refreshPlanChoice();
+}
+document.querySelectorAll("#plan-choice .choice-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    newSlipDraft.plan = btn.dataset.val;
+    newSlipDraft.planPicked = true;
+    refreshPlanChoice();
+  });
+});
+function refreshPlanChoice() {
+  const wrap = document.getElementById("plan-wrap");
+  const n = newSlipDraft.count;
+  const eligible = !!n && n >= NOMI_MIN_PEOPLE;
+  wrap.style.display = eligible ? "" : "none";
+  document.querySelectorAll("#plan-choice .choice-btn").forEach(b => {
+    b.classList.toggle("selected", b.dataset.val === newSlipDraft.plan);
+  });
+  const note = document.getElementById("plan-note");
+  if (eligible) {
+    if (newSlipDraft.plan === "nomi") {
+      note.innerHTML = `飲み放題 <b>${n}名 × ${yen(NOMI_PER_PERSON)} = ${yen(n * NOMI_PER_PERSON)}</b>(2時間・チャージなし)<br>`
+        + `<span style="color:var(--text-muted);">延長は1時間ごとに1人 ${yen(NOMI_EXTEND_PER_PERSON)}。時間のスタートは伝票を作ったあとに押します。</span>`;
+    } else if (newSlipDraft.plan === "normal") {
+      note.innerHTML = `チャージ <b>${n}名 × ${yen(CHARGE_PER_PERSON)} = ${yen(n * CHARGE_PER_PERSON)}</b>(いつも通りの伝票)`;
+    } else {
+      note.innerHTML = `<span style="color:var(--danger); font-weight:600;">${NOMI_MIN_PEOPLE}名以上なので、どちらのプランか選んでください。</span>`;
+    }
+  }
+  updateCreateBtn();
+}
 function updateCreateBtn() {
-  document.getElementById("new-create-btn").disabled = !(newSlipDraft.type && newSlipDraft.count);
+  document.getElementById("new-create-btn").disabled = !(newSlipDraft.type && newSlipDraft.count && newSlipDraft.plan);
 }
 
 document.getElementById("new-create-btn").addEventListener("click", () => {
@@ -543,6 +591,10 @@ document.getElementById("new-create-btn").addEventListener("click", () => {
     status: "open",
     createdAt: new Date().toISOString()
   };
+  // 飲み放題を選んでいたら、その場でプランをつけておく
+  if (newSlipDraft.plan === "nomi") {
+    slip.nomihodai = { count: slip.count, startAt: null, extends: 0 };
+  }
   slips.push(slip);
   currentSlipId = slip.id;
   activeItemTab = "liquor";
@@ -666,12 +718,23 @@ function openNomiSetup() {
   const slip = getCurrentSlip();
   nomiSetupOpen = true;
   const cur = nomiPlan(slip);
-  nomiSetupCount = cur ? cur.count
-    : (slip.count >= NOMI_MIN_PEOPLE && slip.count <= NOMI_MAX_PEOPLE ? slip.count : NOMI_MIN_PEOPLE);
+  nomiSetupCount = cur ? cur.count : (slip.count >= NOMI_MIN_PEOPLE ? slip.count : NOMI_MIN_PEOPLE);
   renderSlipView();
 }
+// 人数の入力に合わせて金額の目安とボタンだけ書き換える(画面全体は作り直さない)
+function onNomiCountInput(v) {
+  const n = parseInt(v, 10);
+  nomiSetupCount = (n >= NOMI_MIN_PEOPLE) ? n : null;
+  const line = document.getElementById("nomi-fee-preview");
+  if (line) {
+    line.innerHTML = nomiSetupCount
+      ? `飲み放題料金 <b>${nomiSetupCount} 名 × ${yen(NOMI_PER_PERSON)} = ${yen(nomiSetupCount * NOMI_PER_PERSON)}</b>`
+      : `<span style="color:var(--danger); font-weight:600;">${NOMI_MIN_PEOPLE}名以上を入れてください</span>`;
+  }
+  const btn = document.getElementById("nomi-save-btn");
+  if (btn) btn.disabled = !nomiSetupCount;
+}
 function closeNomiSetup() { nomiSetupOpen = false; renderSlipView(); }
-function pickNomiCount(n) { nomiSetupCount = n; renderSlipView(); }
 function saveNomiPlan() {
   const slip = getCurrentSlip();
   if (!nomiSetupCount) return;
@@ -742,21 +805,20 @@ function renderNomiPanel(slip, isPaid) {
 
   // --- まだ設定していない / 設定画面を開いている ---
   if (nomiSetupOpen && !isPaid) {
-    const opts = [];
-    for (let i = NOMI_MIN_PEOPLE; i <= NOMI_MAX_PEOPLE; i++) opts.push(i);
     return `
       <div class="panel nomi-panel" style="margin-top:24px;">
         <h2>🍻 飲み放題プラン ${n ? "の人数を変更" : "を設定"}</h2>
         <div class="nomi-note">1人 ${yen(NOMI_PER_PERSON)}(2時間)・延長1時間ごとに1人 ${yen(NOMI_EXTEND_PER_PERSON)}・チャージなし</div>
         ${slip.count < NOMI_MIN_PEOPLE ? `<div class="nomi-warn">この伝票は${slip.count}名です。飲み放題は${NOMI_MIN_PEOPLE}名様からのプランです。</div>` : ''}
-        <label>飲み放題の人数(${NOMI_MIN_PEOPLE}〜${NOMI_MAX_PEOPLE}名)</label>
-        <div class="choice-row nomi-count-row">
-          ${opts.map(i => `<div class="choice-btn ${nomiSetupCount === i ? 'selected' : ''}" onclick="pickNomiCount(${i})">${i}</div>`).join("")}
-        </div>
-        <div class="nomi-fee-line">飲み放題料金 <b>${nomiSetupCount} 名 × ${yen(NOMI_PER_PERSON)} = ${yen((nomiSetupCount || 0) * NOMI_PER_PERSON)}</b></div>
+        <label style="margin-top:10px;">飲み放題の人数(${NOMI_MIN_PEOPLE}名以上)</label>
+        <input type="number" id="nomi-count-input" min="${NOMI_MIN_PEOPLE}" value="${nomiSetupCount || ''}"
+               placeholder="例: 12" oninput="onNomiCountInput(this.value)" style="max-width:160px;">
+        <div class="nomi-fee-line" id="nomi-fee-preview">${nomiSetupCount
+          ? `飲み放題料金 <b>${nomiSetupCount} 名 × ${yen(NOMI_PER_PERSON)} = ${yen(nomiSetupCount * NOMI_PER_PERSON)}</b>`
+          : `<span style="color:var(--danger); font-weight:600;">${NOMI_MIN_PEOPLE}名以上を入れてください</span>`}</div>
         <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
           <button class="btn-ghost" onclick="closeNomiSetup()">やめる</button>
-          <button class="btn-primary" ${nomiSetupCount ? '' : 'disabled'} onclick="saveNomiPlan()">${n ? "人数を変更する" : "この人数で設定する"}</button>
+          <button class="btn-primary" id="nomi-save-btn" ${nomiSetupCount ? '' : 'disabled'} onclick="saveNomiPlan()">${n ? "人数を変更する" : "この人数で設定する"}</button>
           ${n ? `<button class="btn-danger-outline" onclick="removeNomiPlan()">プランを解除</button>` : ''}
         </div>
       </div>
