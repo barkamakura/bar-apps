@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Bar KAMAKURA 売上記録</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="売上記録">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#14100a">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-32.png" sizes="32x32">
+<style>
+  * { box-sizing: border-box; margin:0; padding:0; }
+  html, body { height: 100%; background:#14100a; }
+  .frame-wrap { position:absolute; top:0; left:0; right:0; bottom:0; }
+  .frame-wrap.solo iframe { padding-top: env(safe-area-inset-top); }
+  iframe { width:100%; height:100%; border:none; display:none; background:#14100a; }
+  iframe.active { display:block; }
+
+  /* ---- 暗証番号ロック ---- */
+  #lock {
+    position: fixed; inset: 0; z-index: 200; background: #14100a;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; gap: 18px;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  }
+  #lock.hidden { display: none; }
+  #lock img { width: 92px; height: 92px; border-radius: 21px; }
+  .lock-title { font-size: 14px; font-weight: 600; color: #cbb98a; }
+  .dots { display: flex; gap: 14px; height: 16px; }
+  .dots span { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #d4af6c; }
+  .dots span.on { background: #d4af6c; }
+  .dots.shake { animation: shake .4s; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    25% { transform: translateX(-9px); }
+    75% { transform: translateX(9px); }
+  }
+  .pad { display: grid; grid-template-columns: repeat(3, 74px); gap: 14px; }
+  .pad button {
+    height: 74px; border-radius: 50%; border: 1px solid rgba(212,175,108,0.3);
+    font-size: 26px; font-weight: 500; background: rgba(212,175,108,0.08); color: #e8dcc0;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    font-family: inherit;
+  }
+  .pad button:active { background: rgba(212,175,108,0.25); }
+  .pad button.wide { border-radius: 22px; font-size: 15px; background: transparent; border-color: transparent; color:#cbb98a; }
+  .lock-msg { font-size: 13px; color: #e0776f; height: 18px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div id="lock">
+    <img src="icon-192.png" alt="Bar KAMAKURA">
+    <div class="lock-title">暗証番号を入力してください</div>
+    <div class="dots" id="dots"><span></span><span></span><span></span><span></span></div>
+    <div class="lock-msg" id="lock-msg"></div>
+    <div class="pad" id="pad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <span></span><button data-k="0">0</button><button class="wide" data-k="del">消す</button>
+    </div>
+  </div>
+
+  <div class="frame-wrap solo">
+    <iframe id="frame-app" class="active" data-src="records.html"></iframe>
+  </div>
+
+<script>
+
+// ---- 暗証番号ロック ----
+// 番号そのものはコードに書かず、ハッシュ値だけを保存しています。
+// 番号を変えたいときは、下の PIN_HASH を新しい番号のSHA-256値に差し替えてください。
+const PIN_HASH = "a67ae99df04ecbdbbd885e266be5c7ffaba85d003ca5b9c9e7ac1c5699acb1ac";
+const UNLOCK_KEY = "bk_unlocked";
+let entry = "";
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function paintDots() {
+  document.querySelectorAll("#dots span").forEach((s, i) => s.classList.toggle("on", i < entry.length));
+}
+
+function unlock() {
+  try { localStorage.setItem(UNLOCK_KEY, "1"); } catch (e) {}
+  document.getElementById("lock").classList.add("hidden");
+  document.querySelectorAll(".frame-wrap iframe").forEach(f => {
+    if (!f.src) f.src = f.dataset.src;
+  });
+}
+
+async function pressKey(k) {
+  const msg = document.getElementById("lock-msg");
+  if (k === "del") { entry = entry.slice(0, -1); msg.textContent = ""; paintDots(); return; }
+  if (entry.length >= 4) return;
+  entry += k;
+  paintDots();
+  if (entry.length === 4) {
+    const ok = (await sha256(entry)) === PIN_HASH;
+    if (ok) {
+      unlock();
+    } else {
+      const dots = document.getElementById("dots");
+      dots.classList.add("shake");
+      msg.textContent = "番号が違います";
+      setTimeout(() => { dots.classList.remove("shake"); entry = ""; paintDots(); }, 420);
+    }
+  }
+}
+
+document.getElementById("pad").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (b) pressKey(b.dataset.k);
+});
+
+try {
+  if (localStorage.getItem(UNLOCK_KEY) === "1") unlock();
+} catch (e) {}
+
+// ---- オフライン対応 ----
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
