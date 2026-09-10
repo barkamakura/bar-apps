@@ -627,6 +627,15 @@ function renderItemPicker() {
                 ${g.items.map(i => { const n = stagedCountFor(i.name, "bottle"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "bottle")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`; }).join("")}
               </div>
             `).join("")
+            + `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">割材</h4>
+              ${mixerOnlyList().length === 0
+                ? '<div class="empty-msg">値段確認アプリにソフトドリンク(600円/800円)が登録されていません</div>'
+                : `<div class="item-grid">
+                    ${mixerOnlyList().map(m => { const n = stagedCountFor(mixerOnlyName(m.name), "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick="addMixerOnly(${m.id})"><b>${escapeHtml(m.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>＋${m.extra}円</button>`; }).join("")}
+                  </div>`
+              }
+            `
           : groupByCategory(dishItems, DISH_CATEGORIES).map(g => `
               <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
               <div class="item-grid">
@@ -634,7 +643,7 @@ function renderItemPicker() {
               </div>
             `).join("")
         }
-        ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'bottle' ? bottleItems.length===0 : dishItems.length===0) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
+        ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'dish' ? dishItems.length===0 : false) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
 
         ${activeItemTab === 'liquor' ? `
         <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">カクテル</h4>
@@ -861,6 +870,27 @@ function mixerOptions(extra) {
     .slice()
     .sort((a, b) => JA_COLLATOR.compare(a.name || "", b.name || ""));
 }
+// 値段(600/800円)から割材の追加料金(+100/+200)を逆引き
+const MIXER_EXTRA_BY_PRICE = { 600: 100, 800: 200 };
+// 割材だけを注文する用の一覧(ボトルを入れたお客様向け)。+100 → +200 の順、同額なら五十音順
+function mixerOnlyList() {
+  return (menu.liquors || [])
+    .filter(l => l.category === "ソフトドリンク" && MIXER_EXTRA_BY_PRICE[l.sellPrice || 0])
+    .map(l => ({ ...l, extra: MIXER_EXTRA_BY_PRICE[l.sellPrice] }))
+    .sort((a, b) => (a.extra - b.extra) || JA_COLLATOR.compare(a.name || "", b.name || ""));
+}
+function mixerOnlyName(name) { return `${name}(割材)`; }
+function addMixerOnly(id) {
+  const m = mixerOnlyList().find(x => x.id === id);
+  if (!m) return;
+  addStaged({
+    id: nextItemId++, name: mixerOnlyName(m.name), cat: "liquor", price: m.extra,
+    mods: null, mixerOnly: true, cancelled: false, orderedAt: new Date().toISOString()
+  }, 1);
+  showToast(`${mixerOnlyName(m.name)} を追加しました`);
+  renderItemPicker();
+}
+
 // 注文一覧などに出す文字(例: 割材+100(コーラ))
 function mixerLabel(mods) {
   if (!mods || !mods.mixer) return "";
