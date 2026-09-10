@@ -156,6 +156,27 @@
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .item-tile.staged { background: var(--accent-soft); border-color: var(--accent); }
 
+  /* 他の卓へ切り替えるボタン */
+  .table-switch {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    background: var(--surface-2); border-radius: 10px; padding: 10px 12px; margin-bottom: 16px;
+  }
+  .tsw-label { font-size: 11px; color: var(--text-muted); margin-right: 4px; }
+  .tsw-btn {
+    position: relative; min-width: 54px; padding: 10px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    font-size: 15px; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    font-family: inherit;
+  }
+  .tsw-btn:active { opacity: .7; }
+  .tsw-btn.occupied { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .tsw-btn .tsw-sub { display: block; font-size: 10px; font-weight: 500; color: var(--text-muted); margin-top: 2px; }
+  .tsw-btn.occupied .tsw-sub { color: var(--accent); }
+  .tsw-badge {
+    position: absolute; top: -6px; right: -6px; background: #e8940c; color: #fff;
+    border-radius: 999px; font-size: 10px; font-weight: 700; padding: 1px 6px;
+  }
+
   /* 飲み放題プラン */
   .nomi-panel { border: 2px solid #e8940c; background: #fffaf0; }
   .nomi-panel h2 { color: #a1620a; }
@@ -202,6 +223,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
   </div>
 
   <div id="view-new" style="display:none">
+    <div id="new-table-switch"></div>
     <div class="panel">
       <h2 id="new-slip-title">新規伝票 - </h2>
       <label>新規 or 常連(必須)</label>
@@ -482,9 +504,33 @@ function renderTableGrid() {
   }).join("");
 }
 
+// ---- 他の卓へ移るボタン(今いる卓は出さない) ----
+// 対応中の卓は色を変え、未提供の件数をバッジで出す
+function renderTableSwitch(currentName) {
+  const others = TABLES.filter(t => t !== currentName);
+  return `
+    <div class="table-switch">
+      <span class="tsw-label">他の卓へ</span>
+      ${others.map(t => {
+        const os = openSlipFor(t);
+        const pend = os ? (os.items || []).filter(isPending).length : 0;
+        return `<button class="tsw-btn ${os ? 'occupied' : ''}" onclick="selectTable('${t}')">${t}
+          <span class="tsw-sub">${os ? yen(calcTotal(os)) : '空席'}</span>
+          ${pend ? `<span class="tsw-badge">${pend}</span>` : ''}
+        </button>`;
+      }).join("")}
+    </div>
+  `;
+}
+
 function selectTable(table) {
   currentTable = table;
   nomiSetupOpen = false;
+  // 卓を移るときは、前の卓で開いていたお会計や品目の画面を閉じる
+  payUiOpen = false;
+  payDraft = { method: null, note: "" };
+  closeItemPicker();
+  closeModifierModal();
   const slip = openSlipFor(table);
   if (slip) {
     currentSlipId = slip.id;
@@ -499,6 +545,7 @@ function selectTable(table) {
     document.getElementById("count-input-wrap").style.display = "none";
     document.getElementById("count-input").value = "";
     document.getElementById("note-input").value = "";
+    document.getElementById("new-table-switch").innerHTML = renderTableSwitch(table);
     refreshPlanChoice();
     showView("new");
   }
@@ -671,6 +718,8 @@ function renderSlipView() {
   const nomi = nomiPlan(slip);
 
   el.innerHTML = `
+    ${renderTableSwitch(slip.table)}
+
     <div class="slip-header">
       <div>
         <div class="slip-title">${slip.table} 卓</div>
@@ -1133,6 +1182,8 @@ function setItemTab(tab) { activeItemTab = tab; renderSlipView(); }
 function backToTables() {
   currentSlipId = null;
   currentTable = null;
+  payUiOpen = false;
+  payDraft = { method: null, note: "" };
   showView("tables");
   renderTableGrid();
 }
