@@ -402,7 +402,7 @@ function showDetail(slipId, fromTrash) {
         </div>
         ${(slip.items || []).map(i => {
           const mods = [];
-          if (i.mods && i.mods.mixer) mods.push(`割材+${i.mods.mixer}`);
+          if (i.mods && i.mods.mixer) mods.push(`割材+${i.mods.mixer}${i.mods.mixerName ? `(${i.mods.mixerName})` : ""}`);
           if (i.mods && i.mods.style) mods.push(i.mods.style);
           return `
           <div class="detail-row ${i.cancelled ? 'cancelled' : ''}">

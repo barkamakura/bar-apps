@@ -399,7 +399,7 @@ function renderPendingList() {
   if (list.length === 0) { el.innerHTML = `<div class="empty-msg">未提供の注文はありません</div>`; return; }
   const row = ({ slip, item }) => {
     const mods = [];
-    if (item.mods && item.mods.mixer) mods.push(`割材+${item.mods.mixer}`);
+    if (item.mods && item.mods.mixer) mods.push(mixerLabel(item.mods));
     if (item.mods && item.mods.style) mods.push(item.mods.style);
     return `
       <div class="pending-row">
@@ -658,7 +658,7 @@ function renderItemPicker() {
           <div class="qty-row picked">
             <div class="qty-info">
               <span class="qty-name">${escapeHtml(i.name)}</span>
-              ${i.mods && (i.mods.mixer || i.mods.style) ? `<span class="qty-price">${[i.mods.mixer ? '割材+'+i.mods.mixer : '', i.mods.style || ''].filter(Boolean).join(' / ')}</span>` : ''}
+              ${i.mods && (i.mods.mixer || i.mods.style) ? `<span class="qty-price">${[mixerLabel(i.mods), i.mods.style || ''].filter(Boolean).join(' / ')}</span>` : ''}
               <span class="qty-price">${yen(i.price + itemExtra(i))} × ${i.qty || 1} = <b>${yen((i.price + itemExtra(i)) * (i.qty || 1))}</b></span>
             </div>
             <div class="qty-ctrl">
@@ -710,7 +710,7 @@ function renderOrderList(slip, isPaid) {
   if (slip.items.length === 0) return `<div class="empty-msg">まだ注文がありません</div>`;
   return slip.items.slice().reverse().map(i => {
     const mods = [];
-    if (i.mods && i.mods.mixer) mods.push(`割材+${i.mods.mixer}`);
+    if (i.mods && i.mods.mixer) mods.push(mixerLabel(i.mods));
     if (i.mods && i.mods.style) mods.push(i.mods.style);
     const extra = itemExtra(i);
     return `
@@ -838,7 +838,7 @@ function stageOrderItem(id, cat, mods) {
   if (!source) return;
   const price = cat === "liquor" ? source.sellPrice : source.price;
   addStaged({ id: nextItemId++, name: source.name, cat, price, mods: mods || null, cancelled: false, orderedAt: new Date().toISOString() }, 1);
-  const modLabel = mods && (mods.style || mods.mixer) ? `(${[mods.mixer ? "割材+" + mods.mixer : "", mods.style || ""].filter(Boolean).join(" / ")})` : "";
+  const modLabel = mods && (mods.style || mods.mixer) ? `(${[mixerLabel(mods), mods.style || ""].filter(Boolean).join(" / ")})` : "";
   showToast(`${source.name}${modLabel} を追加しました`);
   renderItemPicker();
 }
@@ -850,7 +850,22 @@ const DRINK_STYLE_OPTIONS = [
   { key: "mix100", label: "割材(+100)", mixer: 100, style: null },
   { key: "mix200", label: "割材(+200)", mixer: 200, style: null }
 ];
-let modalState = { choiceKey: null };
+let modalState = { choiceKey: null, mixerName: null };
+
+// 割材はソフトドリンクと同じもの。+100円 → 600円のソフトドリンク、+200円 → 800円のソフトドリンク
+const MIXER_PRICE_BY_EXTRA = { 100: 600, 200: 800 };
+function mixerOptions(extra) {
+  const price = MIXER_PRICE_BY_EXTRA[extra];
+  return (menu.liquors || [])
+    .filter(l => l.category === "ソフトドリンク" && (l.sellPrice || 0) === price)
+    .slice()
+    .sort((a, b) => JA_COLLATOR.compare(a.name || "", b.name || ""));
+}
+// 注文一覧などに出す文字(例: 割材+100(コーラ))
+function mixerLabel(mods) {
+  if (!mods || !mods.mixer) return "";
+  return `割材+${mods.mixer}${mods.mixerName ? `(${mods.mixerName})` : ""}`;
+}
 function openModifierModal(liquorId) {
   modalState = { choiceKey: null };
   const liquor = menu.liquors.find(x => x.id === liquorId);
@@ -862,6 +877,10 @@ function openModifierModal(liquorId) {
         <div class="choice-row" id="style-choice-row">
           ${DRINK_STYLE_OPTIONS.map(o => `<div class="choice-btn" id="style-opt-${o.key}" onclick="pickDrinkStyle('${o.key}')">${o.label}</div>`).join("")}
         </div>
+        <div id="mixer-wrap" style="display:none; margin-top:6px;">
+          <label>割材を選んでください(必須)</label>
+          <div class="choice-row" id="mixer-choice-row"></div>
+        </div>
         <div style="display:flex; gap:10px; margin-top:14px;">
           <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
           <button class="btn-primary" id="liquor-confirm-btn" disabled onclick="confirmAddLiquor(${liquorId})">この内容で追加</button>
@@ -872,8 +891,41 @@ function openModifierModal(liquorId) {
 }
 function pickDrinkStyle(key) {
   modalState.choiceKey = key;
+  modalState.mixerName = null;
   DRINK_STYLE_OPTIONS.forEach(o => {
     document.getElementById(`style-opt-${o.key}`).classList.toggle("selected", o.key === key);
+  });
+  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === key);
+  const wrap = document.getElementById("mixer-wrap");
+  const row = document.getElementById("mixer-choice-row");
+  const btn = document.getElementById("liquor-confirm-btn");
+  if (opt && opt.mixer) {
+    const list = mixerOptions(opt.mixer);
+    wrap.style.display = "";
+    if (list.length === 0) {
+      row.innerHTML = `<div class="empty-msg" style="padding:6px 0;">値段確認アプリに${MIXER_PRICE_BY_EXTRA[opt.mixer]}円のソフトドリンクが登録されていません</div>`;
+      btn.disabled = false; // 登録がないときは割材の指定なしで追加できる
+    } else {
+      row.innerHTML = list.map(m => `<div class="choice-btn" id="mixer-opt-${m.id}" onclick="pickMixer(${m.id})">${escapeHtml(m.name)}</div>`).join("");
+      btn.disabled = true;  // 割材を選ぶまでは押せない
+    }
+  } else {
+    wrap.style.display = "none";
+    row.innerHTML = "";
+    btn.disabled = false;
+  }
+}
+
+function pickMixer(id) {
+  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === modalState.choiceKey);
+  if (!opt) return;
+  const list = mixerOptions(opt.mixer);
+  const picked = list.find(m => m.id === id);
+  if (!picked) return;
+  modalState.mixerName = picked.name;
+  list.forEach(m => {
+    const el = document.getElementById(`mixer-opt-${m.id}`);
+    if (el) el.classList.toggle("selected", m.id === id);
   });
   document.getElementById("liquor-confirm-btn").disabled = false;
 }
@@ -883,7 +935,7 @@ function closeModifierModal(e) {
 function confirmAddLiquor(liquorId) {
   if (!modalState.choiceKey) return;
   const opt = DRINK_STYLE_OPTIONS.find(o => o.key === modalState.choiceKey);
-  stageOrderItem(liquorId, "liquor", { mixer: opt.mixer, style: opt.style });
+  stageOrderItem(liquorId, "liquor", { mixer: opt.mixer, style: opt.style, mixerName: modalState.mixerName || null });
   closeModifierModal();
 }
 
