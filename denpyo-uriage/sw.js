@@ -2,11 +2,10 @@
 // アプリの画面ファイルだけを端末に保存します。
 // お店のデータ(jsonbin)は必ずネット経由で取りに行くので、古いデータが表示されることはありません。
 
-const CACHE = "bk-app-v25";
+const CACHE = "bk-denpyo-uriage-v25";
 const SHELL = [
   "./",
   "./index.html",
-  "./price.html",
   "./slip.html",
   "./records.html",
   "./manifest.json",

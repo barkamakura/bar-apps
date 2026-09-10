@@ -17,27 +17,28 @@
 | `sw.js` | オフラインでも画面が開くようにする仕組み |
 | `icon-*.png` | アプリアイコン各サイズ |
 | `.nojekyll` | GitHub Pages の余計な変換を止めるための空ファイル |
-| `denpyo/` | **伝票だけの単独アプリ**(v24)。中に index.html / slip.html / manifest.json / sw.js / アイコン |
-| `uriage/` | **売上記録だけの単独アプリ**(v24)。中に index.html / records.html / manifest.json / sw.js / アイコン |
+| `denpyo-uriage/` | **伝票＋売上記録の2つ入りアプリ**(v25)。中に index.html / slip.html / records.html / manifest.json / sw.js / アイコン |
 
-## 3つのアプリの入口(v24)
+## アプリの入口は2つ(v25)
 
-用途に合わせて3つの入口があります。**どれも同じデータ(jsonbin)を見ています。**
+用途に合わせて2つの入口があります。**どちらも同じデータ(jsonbin)を見ています。**
+片方で作った伝票は、もう片方でもそのまま見えます。
 
 | 入口 | URL | 中身 | アイコン |
 | --- | --- | --- | --- |
-| まとめアプリ | `https://barkamakura.github.io/bar-apps/` | 値段確認・伝票・売上記録をタブで切り替え | ロゴのみ |
-| 伝票アプリ | `https://barkamakura.github.io/bar-apps/denpyo/` | 伝票だけ(タブなし) | ロゴ＋オレンジの「伝票」 |
-| 売上記録アプリ | `https://barkamakura.github.io/bar-apps/uriage/` | 売上記録だけ(タブなし) | ロゴ＋青の「売上」 |
+| まとめアプリ | `https://barkamakura.github.io/bar-apps/` | 値段確認・伝票・売上記録の3タブ | ロゴのみ |
+| 伝票・売上記録アプリ | `https://barkamakura.github.io/bar-apps/denpyo-uriage/` | 伝票・売上記録の2タブ | ロゴ＋オレンジの「伝票・売上」 |
 
-それぞれ別のアプリとしてホーム画面に追加できます(3つ並べても見分けがつくようアイコンを分けています)。
+営業中のiPadは2つ入りのほう、商品の登録や値段の計算をするときはまとめアプリ、という使い分けを想定しています。
 **値段確認アプリはまとめアプリの中にだけあります。**
 
-暗証番号は3つとも共通で、同じ端末なら1回入れれば残り2つも解錠済みになります
-(`localStorage` はサイト単位のため)。
+暗証番号は共通で、同じ端末なら1回入れればもう一方も解錠済みになります(`localStorage` はサイト単位のため)。
 
-`denpyo/` と `uriage/` の中の `slip.html` / `records.html` は、まとめアプリのものと**中身が同じコピー**です。
+`denpyo-uriage/` の中の `slip.html` / `records.html` は、ルートのものと**中身が同じコピー**です。
 **片方だけ直すとズレます。直したら必ず両方に配ってください。**
+
+> v24で作った `denpyo/`(伝票だけ)と `uriage/`(売上記録だけ)の単独アプリは、v25で**廃止**しました。
+> リポジトリに残っている場合は「Delete directory」で消してください。
 
 ## 営業日の区切り(17時)(v24)
 
@@ -263,5 +264,5 @@ URLを知られただけの人は入れませんが、技術に詳しい人が�
 ## 更新のしかた
 
 ファイルを書き換えて push すると、1〜2分で公開URLに反映されます。
-`sw.js` の `CACHE = "bk-app-v24"` の番号を上げると、端末に残った古い画面が確実に入れ替わります。
-`denpyo/sw.js`(`bk-denpyo-vNN`)と `uriage/sw.js`(`bk-uriage-vNN`)も忘れずに上げてください。
+`sw.js` の `CACHE = "bk-app-v25"` の番号を上げると、端末に残った古い画面が確実に入れ替わります。
+`denpyo-uriage/sw.js`(`bk-denpyo-uriage-vNN`)も忘れずに上げてください。

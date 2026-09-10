@@ -1,0 +1,1527 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Bar KAMAKURA 伝票アプリ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --surface-2: #f3f2ef;
+    --surface-3: #eae9e4;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #8a8975;
+    --accent: #2a78d6;
+    --accent-soft: #eaf1fb;
+    --danger: #e34948;
+    --danger-soft: #fbeceb;
+    --good: #1baf7a;
+    --good-soft: #e6f7f0;
+    --border: #e4e3dd;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; background: var(--surface-1); color: var(--text-primary); }
+  .app { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { font-size: 13px; color: var(--text-secondary); margin: 0 0 16px; }
+  .sync-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; padding: 6px 10px; background: var(--surface-2); border-radius: 6px; }
+  .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+  .sync-dot.syncing { background: var(--accent); }
+  .sync-dot.error { background: var(--danger); }
+
+  .panel { background: var(--surface-2); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+  .panel h2 { font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+
+  /* 卓グリッド */
+  .table-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+  .table-btn {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 10px; cursor: pointer; text-align: center; font-weight: 600; font-size: 15px;
+  }
+  .table-btn .t-sub { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); margin-top: 4px; }
+  .table-btn.occupied { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  /* 汎用選択ボタン群 */
+  .choice-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .choice-btn {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-primary);
+  }
+  .choice-btn.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  .choice-btn.selected.mod { background: var(--good); border-color: var(--good); }
+  label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+  input[type=text], input[type=number] {
+    width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 13px;
+  }
+  button.btn-primary { background: var(--accent); color: white; cursor: pointer; font-size: 14px; border: none; border-radius: 8px; padding: 11px 20px; font-weight: 600; }
+  button.btn-primary:hover { opacity: 0.9; }
+  button.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.btn-ghost { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); cursor: pointer; font-size: 13px; border-radius: 8px; padding: 9px 14px; }
+  button.btn-ghost.active { background: var(--accent); color: white; border-color: var(--accent); }
+  button.btn-danger-outline { background: transparent; color: var(--danger); border: 1px solid var(--danger); cursor: pointer; font-size: 12px; border-radius: 8px; padding: 5px 10px; }
+  button.btn-paid { background: var(--good); color: white; border: none; border-radius: 8px; padding: 11px 20px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  button.btn-paid:disabled { opacity: 0.7; cursor: default; }
+  .item-tile.custom-tile { border-style: dashed; color: var(--text-secondary); text-align: center; }
+  .pay-box { background: var(--surface-3); border-radius: 10px; padding: 16px 18px; margin-top: 18px; }
+  .pay-box h3 { font-size: 13px; margin: 0 0 10px; }
+
+  /* 伝票エディタ */
+  .slip-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+  .slip-title { font-size: 20px; font-weight: 700; }
+  .slip-meta { font-size: 12px; color: var(--text-secondary); }
+  .slip-meta b { color: var(--text-primary); }
+  .paid-badge { background: var(--good-soft); color: var(--good); font-weight: 700; font-size: 12px; padding: 4px 10px; border-radius: 6px; }
+
+  .total-box { background: var(--surface-3); border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; }
+  .total-box .label { font-size: 13px; color: var(--text-secondary); }
+  .total-box .amount { font-size: 26px; font-weight: 800; color: var(--accent); }
+
+  .item-tab-row { display: flex; gap: 6px; margin-bottom: 12px; }
+  .item-tab-row button { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); font-weight: 500; cursor: pointer; border-radius: 8px; padding: 8px 14px; font-size: 13px; }
+  .item-tab-row button.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+  .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 18px; }
+  .item-tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; cursor: pointer; text-align: left; font-size: 12px;
+  }
+  .item-tile b { display: block; font-size: 13px; margin-bottom: 2px; }
+  .item-tile:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .order-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; font-size: 13px;
+  }
+  .order-row.cancelled .o-name, .order-row.cancelled .o-price { text-decoration: line-through; color: var(--danger); opacity: 0.7; }
+  .o-info { display: flex; flex-direction: column; }
+  .o-mods { font-size: 11px; color: var(--text-muted); }
+  .empty-msg { color: var(--text-muted); font-size: 13px; padding: 16px 0; text-align: center; }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 10;
+  }
+  .modal-box { background: var(--surface-1); border-radius: 12px; padding: 20px; max-width: 380px; width: 100%; }
+  .modal-box h3 { margin: 0 0 14px; font-size: 15px; }
+
+  /* ショットの数量選び */
+  .qty-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px;
+  }
+  .qty-row.picked { background: var(--accent-soft); border: 1px solid var(--accent); }
+  .qty-info { display: flex; flex-direction: column; }
+  .qty-name { font-size: 13px; font-weight: 600; }
+  .qty-price { font-size: 11px; color: var(--text-muted); }
+  .qty-ctrl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .qty-ctrl button {
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 20px; line-height: 1;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .qty-ctrl button:disabled { opacity: 0.35; cursor: default; }
+  .qty-ctrl .qty-num { min-width: 26px; text-align: center; font-size: 16px; font-weight: 700; }
+
+  /* 未提供の注文 */
+  .pending-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: #fff6e5; border: 1px solid #e8b657; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 8px;
+  }
+  .pending-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .pending-table { font-size: 15px; font-weight: 700; }
+  .pending-name { font-size: 13px; }
+  .pending-sub { font-size: 11px; color: var(--text-muted); }
+  .btn-serve {
+    background: #e8940c; color: #fff; border: none; border-radius: 8px;
+    padding: 11px 18px; font-size: 14px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-serve:active { opacity: .85; }
+  .served-tag { font-size: 11px; color: var(--good); font-weight: 600; }
+  .order-row.pending { background: #fff6e5; border: 1px solid #e8b657; }
+  .pending-head { font-size: 13px; margin: 4px 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--border); }
+  .pending-head.drink { color: #1c5a86; border-bottom-color: #1c5a86; }
+  .pending-head.food { color: #8a5a1c; border-bottom-color: #8a5a1c; margin-top: 18px; }
+
+  /* 追加したときの合図 */
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(12px);
+    background: rgba(20,16,10,.94); color: #fff; padding: 12px 20px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; z-index: 999; opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .item-tile.staged { background: var(--accent-soft); border-color: var(--accent); }
+
+  /* 飲み放題プラン */
+  .nomi-panel { border: 2px solid #e8940c; background: #fffaf0; }
+  .nomi-panel h2 { color: #a1620a; }
+  .nomi-note { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .nomi-warn { background: var(--danger-soft); color: var(--danger); border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; margin: 10px 0; }
+  .nomi-count-row { gap: 6px; }
+  .nomi-count-row .choice-btn { min-width: 46px; text-align: center; padding: 10px 0; }
+  .nomi-fee-line { font-size: 13px; line-height: 1.8; background: var(--surface-1); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+  .nomi-time { border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+  .nomi-time-idle { background: var(--surface-3); }
+  .nomi-time-ok { background: var(--good-soft); border: 1px solid var(--good); }
+  .nomi-time-lo { background: #fff6e5; border: 1px solid #e8b657; }
+  .nomi-time-over { background: var(--danger-soft); border: 1px solid var(--danger); }
+  .nomi-time-main { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+  .nomi-time-sub { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+  .nomi-tag { font-size: 11px; font-weight: 700; color: #a1620a; background: #ffeccc; border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
+  .t-sub .nomi-mark { color: #a1620a; font-weight: 700; }
+  .tile-badge {
+    display: inline-block; background: var(--accent); color: #fff; border-radius: 999px;
+    font-size: 11px; font-weight: 700; padding: 1px 7px; margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+<script>
+// 直接このURLを開かれたときは、暗証番号の画面へ戻します
+try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.html"); } catch (e) {}
+</script>
+
+<div class="app">
+  <h1>Bar KAMAKURA 伝票</h1>
+  <p class="subtitle">卓を選んで新規伝票を作成、または対応中の伝票を開きます</p>
+  <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
+
+  <div id="view-tables">
+    <div class="panel">
+      <h2>卓を選択</h2>
+      <div class="table-grid" id="table-grid"></div>
+    </div>
+    <div class="panel" id="pending-panel">
+      <h2>未提供の注文(受注順)</h2>
+      <div id="pending-list"></div>
+    </div>
+  </div>
+
+  <div id="view-new" style="display:none">
+    <div class="panel">
+      <h2 id="new-slip-title">新規伝票 - </h2>
+      <label>新規 or 常連(必須)</label>
+      <div class="choice-row" id="type-choice">
+        <div class="choice-btn" data-val="新規">新規</div>
+        <div class="choice-btn" data-val="常連">常連</div>
+      </div>
+      <label>人数(必須)</label>
+      <div class="choice-row" id="count-choice">
+        <div class="choice-btn" data-val="1">1</div>
+        <div class="choice-btn" data-val="2">2</div>
+        <div class="choice-btn" data-val="3">3</div>
+        <div class="choice-btn" data-val="4">4</div>
+        <div class="choice-btn" data-val="5">5</div>
+        <div class="choice-btn" data-val="6">6</div>
+        <div class="choice-btn" data-val="7">7</div>
+        <div class="choice-btn" data-val="8">8</div>
+        <div class="choice-btn" data-val="9">9</div>
+        <div class="choice-btn" data-val="input" id="count-input-btn">入力</div>
+      </div>
+      <div id="count-input-wrap" style="display:none; margin-bottom:14px;">
+        <label>人数を入力(10人以上)</label>
+        <input type="number" id="count-input" min="10" placeholder="例: 12">
+      </div>
+      <label>任意項目</label>
+      <div style="margin-bottom:16px;"><input type="text" id="note-input" placeholder="例: 誕生日のお客様"></div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-ghost" id="new-cancel-btn">戻る</button>
+        <button class="btn-primary" id="new-create-btn" disabled>この内容で伝票を作成</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-slip" style="display:none"></div>
+</div>
+
+<div id="toast"></div>
+<div id="item-picker-modal"></div>
+<div id="modifier-modal"></div>
+
+<script>
+// ---- shared jsonbin.io backend ----
+const BIN_ID = "6a843737da38895dfef24f99";
+const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
+const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+
+const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
+const CHARGE_PER_PERSON = 500;
+const DISH_CATEGORIES = ["おつまみ","料理"];
+// このジャンルは割材も飲み方もないので、タップしたらそのまま追加する
+const NO_MODS_CATEGORIES = ["ビール","ワイン","ソフトドリンク","ホットドリンク"];
+const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク","シャンパン"];
+const BOTTLE_CATEGORIES = ["ワイン","シャンパン","その他"];
+const COCKTAIL_PRICE_OPTIONS = [800,900,1000,1100,1200,1300,1400,1500];
+
+// ---- 飲み放題プラン ----
+const NOMI_PER_PERSON = 4000;          // 1人あたりの飲み放題料金(2時間)
+const NOMI_EXTEND_PER_PERSON = 2000;   // 延長1時間あたり1人の料金
+const NOMI_MIN_PEOPLE = 8;
+const NOMI_MAX_PEOPLE = 30;
+const NOMI_PRICE_LIMIT = 700;          // 飲み放題で頼めるお酒の上限(税込)
+const NOMI_MIXER_EXTRA = 100;          // 飲み放題で使える割材は「＋100円」のものだけ
+const NOMI_PLAN_MINUTES = 120;         // 基本は2時間
+const NOMI_EXTEND_MINUTES = 60;        // 延長1回で1時間
+const NOMI_LO_BEFORE_END = 30;         // ラストオーダーは終了の30分前(開始1時間半後)
+const NOMI_ORDER_STOP_BEFORE_END = 20; // 実際に注文を止めるのは終了の20分前(開始1時間40分後)
+
+// 五十音順の並べ替え用(ひらがな・カタカナを同じ扱いにし、数字も自然な順に)
+const JA_COLLATOR = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
+function itemPrice(i) { return (i.cat === 'bottle' ? i.price : i.sellPrice) || 0; }
+// まず値段の安い順、同じ値段どうしは五十音順(名前順)
+function byPriceThenNameJa(a, b) {
+  const d = itemPrice(a) - itemPrice(b);
+  if (d !== 0) return d;
+  return JA_COLLATOR.compare(a.name || "", b.name || "");
+}
+
+function groupByCategory(items, categoryOrder) {
+  const groups = {};
+  items.forEach(i => {
+    const cat = i.category || "未分類";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(i);
+  });
+  // ジャンルの中は「値段の安い順 → 同じ値段なら五十音順」に並べる
+  Object.keys(groups).forEach(cat => groups[cat].sort(byPriceThenNameJa));
+  const orderedCats = [...categoryOrder, ...Object.keys(groups).filter(c => !categoryOrder.includes(c))];
+  return orderedCats.filter(c => groups[c]).map(c => ({ category: c, items: groups[c] }));
+}
+
+let fullRecord = {};
+let menu = { dishes: [], liquors: [], bottles: [], shots: [] };
+let slips = [];
+let nextSlipId = 1;
+let nextItemId = 1;
+let loaded = false;
+
+let currentTable = null;
+let currentSlipId = null;
+let newSlipDraft = { type: null, count: null };
+let activeItemTab = "liquor";
+let payUiOpen = false;
+let payDraft = { method: null, note: "" };
+let pickerOpen = false;
+let pickerMode = "normal"; // "normal" = 通常の注文 / "nomi" = 飲み放題(0円)の注文
+let stagedItems = [];
+
+function setSync(state, text) {
+  const dot = document.getElementById("sync-dot");
+  const label = document.getElementById("sync-text");
+  dot.className = "sync-dot" + (state ? " " + state : "");
+  label.textContent = text;
+}
+
+async function loadData() {
+  setSync("syncing", "読み込み中...");
+  try {
+    const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
+    if (!res.ok) throw new Error("load failed");
+    const json = await res.json();
+    fullRecord = json.record || {};
+    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
+    if (!menu.shots) menu.shots = [];
+    slips = fullRecord.slips || [];
+    const slipIds = slips.map(s => s.id || 0);
+    nextSlipId = (slipIds.length ? Math.max(...slipIds) : 0) + 1;
+    const itemIds = slips.flatMap(s => (s.items||[]).map(i => i.id || 0));
+    nextItemId = (itemIds.length ? Math.max(...itemIds) : 0) + 1;
+    loaded = true;
+    setSync("", "同期済み(全員で共有中)");
+  } catch (e) {
+    setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+  }
+  renderTableGrid();
+  if (currentSlipId) renderSlipView();
+}
+
+async function saveData() {
+  setSync("syncing", "保存中...");
+  try {
+    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
+    if (!res0.ok) throw new Error("reload failed");
+    fullRecord = (await res0.json()).record || {};
+    fullRecord.slips = slips;
+    const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
+    if (!res.ok) throw new Error("save failed");
+    setSync("", "同期済み(全員で共有中)");
+  } catch (e) {
+    setSync("error", "保存エラー、通信状況を確認してください");
+  }
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function yen(n) { return "¥" + Math.round(n).toLocaleString(); }
+
+function openSlipFor(table) {
+  return slips.find(s => s.table === table && s.status === "open");
+}
+
+// ---- 画面切り替え ----
+function showView(name) {
+  document.getElementById("view-tables").style.display = name === "tables" ? "" : "none";
+  document.getElementById("view-new").style.display = name === "new" ? "" : "none";
+  document.getElementById("view-slip").style.display = name === "slip" ? "" : "none";
+}
+
+// ---- 卓グリッド ----
+// ---- 提供の管理 ----
+// served が undefined の注文(この機能より前に入れたもの)は「提供済み」として扱う
+function isPending(i) { return i.served === false && !i.cancelled; }
+// お酒・お酒(ボトル)・ショット・カクテルはドリンク、それ以外(おつまみ・料理)はフード
+const DRINK_CATS = ["liquor", "bottle", "shot", "cocktail"];
+function isDrinkItem(i) { return DRINK_CATS.includes(i.cat); }
+
+function serveItem(slipId, itemId) {
+  const slip = slips.find(s => s.id === slipId);
+  if (!slip) return;
+  const item = (slip.items || []).find(i => i.id === itemId);
+  if (!item) return;
+  item.served = true;
+  item.servedAt = new Date().toISOString();
+  renderPendingList();
+  renderTableGrid();
+  if (currentSlipId) renderSlipView();
+  saveData();
+}
+
+function unserveItem(slipId, itemId) {
+  const slip = slips.find(s => s.id === slipId);
+  if (!slip) return;
+  const item = (slip.items || []).find(i => i.id === itemId);
+  if (!item) return;
+  item.served = false;
+  delete item.servedAt;
+  renderPendingList();
+  renderTableGrid();
+  if (currentSlipId) renderSlipView();
+  saveData();
+}
+
+function pendingOrders() {
+  const out = [];
+  slips.filter(s => s.status === "open").forEach(s => {
+    (s.items || []).filter(isPending).forEach(i => out.push({ slip: s, item: i }));
+  });
+  // 受注順(古いものが上)
+  out.sort((a, b) => new Date(a.item.orderedAt || 0) - new Date(b.item.orderedAt || 0));
+  return out;
+}
+
+function waitedLabel(iso) {
+  if (!iso) return "";
+  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return "たった今";
+  if (min < 60) return `${min}分前`;
+  return `${Math.floor(min / 60)}時間${min % 60}分前`;
+}
+
+function renderPendingList() {
+  const el = document.getElementById("pending-list");
+  if (!el) return;
+  const list = pendingOrders();
+  const head = document.querySelector("#pending-panel h2");
+  if (head) head.textContent = `未提供の注文(受注順) ${list.length}件`;
+  if (!loaded) { el.innerHTML = ""; return; }
+  if (list.length === 0) { el.innerHTML = `<div class="empty-msg">未提供の注文はありません</div>`; return; }
+  const row = ({ slip, item }) => {
+    const mods = [];
+    if (item.mods && (item.mods.mixer || item.mods.mixerName)) mods.push(mixerLabel(item.mods));
+    if (item.mods && item.mods.style) mods.push(item.mods.style);
+    if (item.nomi) mods.push("飲み放題");
+    return `
+      <div class="pending-row">
+        <div class="pending-info">
+          <span class="pending-table">${slip.table} 卓</span>
+          <span class="pending-name">${escapeHtml(item.name)}${mods.length ? ` <span class="pending-sub">(${mods.join(" / ")})</span>` : ''}</span>
+          <span class="pending-sub">${waitedLabel(item.orderedAt)}</span>
+        </div>
+        <button class="btn-serve" onclick="serveItem(${slip.id}, ${item.id})">提供</button>
+      </div>
+    `;
+  };
+  // バーなのでドリンクを先に出す
+  const drinks = list.filter(x => isDrinkItem(x.item));
+  const foods  = list.filter(x => !isDrinkItem(x.item));
+  const block = (title, arr, cls) => `
+    <h3 class="pending-head ${cls}">${title} ${arr.length}件</h3>
+    ${arr.length === 0 ? '<div class="empty-msg" style="padding:8px 0;">なし</div>' : arr.map(row).join("")}
+  `;
+  el.innerHTML = block("🍸 ドリンク(お酒・ボトル・ショット・カクテル)", drinks, "drink")
+              + block("🍽 おつまみ・料理", foods, "food");
+}
+
+function renderTableGrid() {
+  renderPendingList();
+  const grid = document.getElementById("table-grid");
+  grid.innerHTML = TABLES.map(t => {
+    const slip = openSlipFor(t);
+    if (slip) {
+      const total = calcTotal(slip);
+      const pend = (slip.items || []).filter(isPending).length;
+      const nt = nomiTiming(slip);
+      const nomiMark = nomiPlan(slip)
+        ? `<span class="nomi-mark">🍻飲み放題${nt ? (nt.remainMin > 0 ? ` 残${fmtMin(nt.remainMin)}` : " 時間超過") : " 未スタート"}</span><br>`
+        : '';
+      return `<div class="table-btn occupied" onclick="selectTable('${t}')">${t}<span class="t-sub">${nomiMark}対応中 ${yen(total)}${pend ? ` ・未提供${pend}` : ''}</span></div>`;
+    }
+    return `<div class="table-btn" onclick="selectTable('${t}')">${t}<span class="t-sub">空席</span></div>`;
+  }).join("");
+}
+
+function selectTable(table) {
+  currentTable = table;
+  nomiSetupOpen = false;
+  const slip = openSlipFor(table);
+  if (slip) {
+    currentSlipId = slip.id;
+    activeItemTab = "liquor";
+    showView("slip");
+    renderSlipView();
+  } else {
+    newSlipDraft = { type: null, count: null };
+    document.getElementById("new-slip-title").textContent = "新規伝票 - " + table;
+    document.querySelectorAll("#type-choice .choice-btn").forEach(b => b.classList.remove("selected"));
+    document.querySelectorAll("#count-choice .choice-btn").forEach(b => b.classList.remove("selected"));
+    document.getElementById("count-input-wrap").style.display = "none";
+    document.getElementById("count-input").value = "";
+    document.getElementById("note-input").value = "";
+    updateCreateBtn();
+    showView("new");
+  }
+}
+
+document.getElementById("new-cancel-btn").addEventListener("click", () => {
+  currentTable = null;
+  showView("tables");
+  renderTableGrid();
+});
+
+document.querySelectorAll("#type-choice .choice-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#type-choice .choice-btn").forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    newSlipDraft.type = btn.dataset.val;
+    updateCreateBtn();
+  });
+});
+document.querySelectorAll("#count-choice .choice-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#count-choice .choice-btn").forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    if (btn.dataset.val === "input") {
+      document.getElementById("count-input-wrap").style.display = "";
+      newSlipDraft.count = null;
+    } else {
+      document.getElementById("count-input-wrap").style.display = "none";
+      newSlipDraft.count = parseInt(btn.dataset.val, 10);
+    }
+    updateCreateBtn();
+  });
+});
+document.getElementById("count-input").addEventListener("input", (e) => {
+  const v = parseInt(e.target.value, 10);
+  newSlipDraft.count = v > 0 ? v : null;
+  updateCreateBtn();
+});
+function updateCreateBtn() {
+  document.getElementById("new-create-btn").disabled = !(newSlipDraft.type && newSlipDraft.count);
+}
+
+document.getElementById("new-create-btn").addEventListener("click", () => {
+  const slip = {
+    id: nextSlipId++,
+    table: currentTable,
+    type: newSlipDraft.type,
+    count: newSlipDraft.count,
+    note: document.getElementById("note-input").value.trim(),
+    items: [],
+    status: "open",
+    createdAt: new Date().toISOString()
+  };
+  slips.push(slip);
+  currentSlipId = slip.id;
+  activeItemTab = "liquor";
+  showView("slip");
+  renderSlipView();
+  saveData();
+});
+
+// ---- 合計計算 ----
+function itemExtra(item) {
+  let extra = 0;
+  if (item.mods && item.mods.mixer) extra += item.mods.mixer;
+  return extra;
+}
+
+// ---- 飲み放題プランの計算 ----
+function nomiPlan(slip) { return (slip && slip.nomihodai) ? slip.nomihodai : null; }
+// 飲み放題のときはチャージをもらわない(飲み放題料金に含まれているため)
+function chargeFor(slip) { return nomiPlan(slip) ? 0 : (slip.count || 0) * CHARGE_PER_PERSON; }
+function nomiBaseFee(slip) {
+  const n = nomiPlan(slip);
+  return n ? n.count * NOMI_PER_PERSON : 0;
+}
+function nomiExtendFee(slip) {
+  const n = nomiPlan(slip);
+  return n ? (n.extends || 0) * n.count * NOMI_EXTEND_PER_PERSON : 0;
+}
+function nomiFee(slip) { return nomiBaseFee(slip) + nomiExtendFee(slip); }
+
+// 飲み放題の時間割り。開始していなければ null
+function nomiTiming(slip) {
+  const n = nomiPlan(slip);
+  if (!n || !n.startAt) return null;
+  const start = new Date(n.startAt).getTime();
+  if (isNaN(start)) return null;
+  const totalMin = NOMI_PLAN_MINUTES + (n.extends || 0) * NOMI_EXTEND_MINUTES;
+  const elapsed = Math.floor((Date.now() - start) / 60000);
+  return {
+    start,
+    totalMin,
+    elapsed,
+    endAt: start + totalMin * 60000,
+    loAt: start + (totalMin - NOMI_LO_BEFORE_END) * 60000,
+    stopAt: start + (totalMin - NOMI_ORDER_STOP_BEFORE_END) * 60000,
+    remainMin: totalMin - elapsed,
+    loPassed: elapsed >= totalMin - NOMI_LO_BEFORE_END,
+    orderClosed: elapsed >= totalMin - NOMI_ORDER_STOP_BEFORE_END
+  };
+}
+// 飲み放題の注文を今つけられるか
+function nomiCanOrder(slip) {
+  const n = nomiPlan(slip);
+  if (!n) return false;
+  const t = nomiTiming(slip);
+  if (!t) return true;       // まだスタートを押していないうちは追加できる
+  return !t.orderClosed;
+}
+
+function calcTotal(slip) {
+  const itemsTotal = slip.items.filter(i => !i.cancelled).reduce((s,i) => s + i.price + itemExtra(i), 0);
+  return chargeFor(slip) + nomiFee(slip) + itemsTotal;
+}
+
+// ---- 伝票エディタ ----
+function getCurrentSlip() { return slips.find(s => s.id === currentSlipId); }
+
+function renderSlipView() {
+  const slip = getCurrentSlip();
+  const el = document.getElementById("view-slip");
+  if (!slip) { el.innerHTML = ""; return; }
+  const total = calcTotal(slip);
+  const charge = chargeFor(slip);
+  const isPaid = slip.status === "paid";
+  const nomi = nomiPlan(slip);
+
+  el.innerHTML = `
+    <div class="slip-header">
+      <div>
+        <div class="slip-title">${slip.table} 卓</div>
+        <div class="slip-meta"><b>${escapeHtml(slip.type)}</b> ・ <b>${slip.count}名</b> ・ ${nomi ? `飲み放題 <b>${nomi.count}名</b>(チャージなし)` : `チャージ ${yen(charge)}`}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}</div>
+      </div>
+      ${isPaid ? `<span class="paid-badge">お会計済(${escapeHtml(slip.payment ? (slip.payment.method + (slip.payment.note ? ':' + slip.payment.note : '')) : '')})</span>` : ''}
+    </div>
+
+    <div class="total-box">
+      <span class="label">合計金額</span>
+      <span class="amount">${yen(total)}</span>
+    </div>
+
+    ${!isPaid ? `<div style="margin-bottom:18px;"><button class="btn-primary" style="width:100%" onclick="openItemPicker()">＋ 追加${nomi ? '(別途料金)' : ''}</button></div>` : ''}
+
+    <h2 style="font-size:14px; margin:0 0 10px;">注文内容</h2>
+    <div id="order-list">${renderOrderList(slip, isPaid)}</div>
+
+    <div style="display:flex; gap:10px; margin-top:18px;">
+      <button class="btn-ghost" onclick="backToTables()">卓一覧に戻る</button>
+      ${isPaid ? '<button class="btn-paid" disabled>お会計済</button>' : (payUiOpen ? '' : '<button class="btn-paid" onclick="startPayment()">お会計</button>')}
+    </div>
+
+    ${(!isPaid && payUiOpen) ? renderPayBox() : ''}
+
+    <div id="nomi-panel">${renderNomiPanel(slip, isPaid)}</div>
+  `;
+}
+
+// ================= 飲み放題プラン =================
+function fmtClock(ms) {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+function fmtMin(min) {
+  const m = Math.max(0, Math.round(min));
+  if (m < 60) return `${m}分`;
+  return `${Math.floor(m / 60)}時間${m % 60 ? (m % 60) + "分" : ""}`;
+}
+
+let nomiSetupOpen = false;
+let nomiSetupCount = null;
+
+function openNomiSetup() {
+  const slip = getCurrentSlip();
+  nomiSetupOpen = true;
+  const cur = nomiPlan(slip);
+  nomiSetupCount = cur ? cur.count
+    : (slip.count >= NOMI_MIN_PEOPLE && slip.count <= NOMI_MAX_PEOPLE ? slip.count : NOMI_MIN_PEOPLE);
+  renderSlipView();
+}
+function closeNomiSetup() { nomiSetupOpen = false; renderSlipView(); }
+function pickNomiCount(n) { nomiSetupCount = n; renderSlipView(); }
+function saveNomiPlan() {
+  const slip = getCurrentSlip();
+  if (!nomiSetupCount) return;
+  if (slip.nomihodai) {
+    slip.nomihodai.count = nomiSetupCount;
+  } else {
+    slip.nomihodai = { count: nomiSetupCount, startAt: null, extends: 0 };
+  }
+  nomiSetupOpen = false;
+  renderSlipView();
+  renderTableGrid();
+  saveData();
+}
+function removeNomiPlan() {
+  const slip = getCurrentSlip();
+  const paidItems = (slip.items || []).filter(i => i.nomi && !i.cancelled).length;
+  if (!confirm(`飲み放題プランを解除します。\n${paidItems ? `飲み放題でつけた${paidItems}点の注文は0円のまま残ります。\n` : ""}よろしいですか?`)) return;
+  delete slip.nomihodai;
+  nomiSetupOpen = false;
+  renderSlipView();
+  renderTableGrid();
+  saveData();
+}
+function startNomiClock() {
+  const slip = getCurrentSlip();
+  const n = nomiPlan(slip);
+  if (!n) return;
+  n.startAt = new Date().toISOString();
+  renderSlipView();
+  renderTableGrid();
+  saveData();
+}
+function editNomiStart() {
+  const slip = getCurrentSlip();
+  const n = nomiPlan(slip);
+  if (!n) return;
+  const base = n.startAt ? new Date(n.startAt) : new Date();
+  const cur = `${String(base.getHours()).padStart(2,"0")}:${String(base.getMinutes()).padStart(2,"0")}`;
+  const input = prompt("スタート時間を入力してください(24時間表記、例 20:15)", cur);
+  if (input === null) return;
+  const m = String(input).trim().match(/^(\d{1,2})[:：](\d{1,2})$/);
+  if (!m) { alert("時間の形式が違います。20:15 のように入力してください。"); return; }
+  const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+  if (h > 23 || mi > 59) { alert("時間の形式が違います。20:15 のように入力してください。"); return; }
+  const d = new Date();
+  d.setHours(h, mi, 0, 0);
+  // 深夜営業で「日付が変わったのに今より先の時間」を入れた場合は前日として扱う
+  if (d.getTime() - Date.now() > 6 * 3600 * 1000) d.setDate(d.getDate() - 1);
+  n.startAt = d.toISOString();
+  renderSlipView();
+  renderTableGrid();
+  saveData();
+}
+function extendNomi(delta) {
+  const slip = getCurrentSlip();
+  const n = nomiPlan(slip);
+  if (!n) return;
+  const next = Math.max(0, (n.extends || 0) + delta);
+  if (next > 12) return;
+  n.extends = next;
+  renderSlipView();
+  renderTableGrid();
+  saveData();
+}
+
+function renderNomiPanel(slip, isPaid) {
+  const n = nomiPlan(slip);
+
+  // --- まだ設定していない / 設定画面を開いている ---
+  if (nomiSetupOpen && !isPaid) {
+    const opts = [];
+    for (let i = NOMI_MIN_PEOPLE; i <= NOMI_MAX_PEOPLE; i++) opts.push(i);
+    return `
+      <div class="panel nomi-panel" style="margin-top:24px;">
+        <h2>🍻 飲み放題プラン ${n ? "の人数を変更" : "を設定"}</h2>
+        <div class="nomi-note">1人 ${yen(NOMI_PER_PERSON)}(2時間)・延長1時間ごとに1人 ${yen(NOMI_EXTEND_PER_PERSON)}・チャージなし</div>
+        ${slip.count < NOMI_MIN_PEOPLE ? `<div class="nomi-warn">この伝票は${slip.count}名です。飲み放題は${NOMI_MIN_PEOPLE}名様からのプランです。</div>` : ''}
+        <label>飲み放題の人数(${NOMI_MIN_PEOPLE}〜${NOMI_MAX_PEOPLE}名)</label>
+        <div class="choice-row nomi-count-row">
+          ${opts.map(i => `<div class="choice-btn ${nomiSetupCount === i ? 'selected' : ''}" onclick="pickNomiCount(${i})">${i}</div>`).join("")}
+        </div>
+        <div class="nomi-fee-line">飲み放題料金 <b>${nomiSetupCount} 名 × ${yen(NOMI_PER_PERSON)} = ${yen((nomiSetupCount || 0) * NOMI_PER_PERSON)}</b></div>
+        <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+          <button class="btn-ghost" onclick="closeNomiSetup()">やめる</button>
+          <button class="btn-primary" ${nomiSetupCount ? '' : 'disabled'} onclick="saveNomiPlan()">${n ? "人数を変更する" : "この人数で設定する"}</button>
+          ${n ? `<button class="btn-danger-outline" onclick="removeNomiPlan()">プランを解除</button>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  if (!n) {
+    if (isPaid) return "";
+    return `
+      <div class="panel nomi-panel" style="margin-top:24px;">
+        <h2>🍻 飲み放題プラン</h2>
+        <div class="nomi-note">${NOMI_MIN_PEOPLE}名様から・1人 ${yen(NOMI_PER_PERSON)}(2時間)・チャージなし</div>
+        <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="openNomiSetup()">飲み放題プランを設定する</button>
+      </div>
+    `;
+  }
+
+  // --- 設定済み ---
+  const t = nomiTiming(slip);
+  const canOrder = nomiCanOrder(slip);
+  return `
+    <div class="panel nomi-panel" style="margin-top:24px;">
+      <h2>🍻 飲み放題プラン ${n.count}名</h2>
+
+      <div class="nomi-fee-line">
+        飲み放題料金 <b>${n.count}名 × ${yen(NOMI_PER_PERSON)} = ${yen(nomiBaseFee(slip))}</b>
+        ${n.extends ? `<br>延長 <b>${n.extends}時間 × ${n.count}名 × ${yen(NOMI_EXTEND_PER_PERSON)} = ${yen(nomiExtendFee(slip))}</b>` : ''}
+        <br>飲み放題の小計 <b>${yen(nomiFee(slip))}</b>
+      </div>
+
+      <div id="nomi-time-box">${renderNomiTimeBox(slip)}</div>
+
+      ${!isPaid ? `
+        <button class="btn-primary" id="nomi-add-btn" style="width:100%; margin-top:14px;" ${canOrder ? '' : 'disabled'} onclick="openNomiPicker()">
+          ＋ 飲み放題の注文を追加(0円)
+        </button>
+        <div class="nomi-note" style="margin-top:6px;">${NOMI_PRICE_LIMIT}円以下のお酒・ソフトドリンク／割材は＋100円のものが対象です</div>
+
+        <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:14px;">
+          <h2 style="margin-bottom:6px;">別途お酒・おつまみ等</h2>
+          <div class="nomi-note">飲み放題に入っていない商品です。通常の値段で合計に足されます。</div>
+          <button class="btn-ghost" style="width:100%; margin-top:10px;" onclick="openItemPicker()">＋ 別途料金で追加する</button>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
+          <button class="btn-ghost" onclick="openNomiSetup()">人数を変更</button>
+          <button class="btn-danger-outline" onclick="removeNomiPlan()">プランを解除</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderNomiTimeBox(slip) {
+  const n = nomiPlan(slip);
+  if (!n) return "";
+  const t = nomiTiming(slip);
+  const isPaid = slip.status === "paid";
+
+  if (!t) {
+    return `
+      <div class="nomi-time nomi-time-idle">
+        <div class="nomi-time-main">スタート前</div>
+        <div class="nomi-note">お客様に提供を始めたらボタンを押してください(2時間の計測が始まります)</div>
+      </div>
+      ${!isPaid ? `<button class="btn-primary" style="width:100%; margin-top:10px; background:#e8940c;" onclick="startNomiClock()">▶ スタート</button>` : ''}
+    `;
+  }
+
+  const state = t.remainMin <= 0 ? "over" : (t.loPassed ? "lo" : "ok");
+  const remainText = t.remainMin > 0 ? `残り ${fmtMin(t.remainMin)}` : `終了時間を ${fmtMin(-t.remainMin)} 過ぎています`;
+  const loText = t.orderClosed
+    ? "ラストオーダー終了(注文の受付を締め切りました)"
+    : (t.loPassed
+        ? `ラストオーダー中 ${fmtClock(t.stopAt)} まで受付`
+        : `ラストオーダー ${fmtClock(t.loAt)}(あと ${fmtMin((t.loAt - Date.now()) / 60000)})`);
+
+  return `
+    <div class="nomi-time nomi-time-${state}">
+      <div class="nomi-time-main">${remainText}</div>
+      <div class="nomi-time-sub">開始 ${fmtClock(t.start)} → 終了予定 ${fmtClock(t.endAt)}${n.extends ? `(${NOMI_PLAN_MINUTES / 60}時間＋延長${n.extends}時間)` : "(2時間)"}</div>
+      <div class="nomi-time-sub">${loText}</div>
+    </div>
+    ${!isPaid ? `
+      <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+        <button class="btn-ghost" onclick="editNomiStart()">開始時間を修正</button>
+        <button class="btn-primary" style="background:#1baf7a;" onclick="extendNomi(1)">＋1時間延長(＋${yen(n.count * NOMI_EXTEND_PER_PERSON)})</button>
+        ${n.extends ? `<button class="btn-danger-outline" onclick="extendNomi(-1)">延長を1時間戻す</button>` : ''}
+      </div>
+    ` : ''}
+  `;
+}
+
+// 1分ごとに残り時間の表示だけ差し替える(画面全体は作り直さない)
+function tickNomiTime() {
+  const box = document.getElementById("nomi-time-box");
+  if (!box) return;
+  const slip = getCurrentSlip();
+  if (!slip || !nomiPlan(slip)) return;
+  if (document.querySelector("#item-picker-modal .modal-backdrop")) return; // 追加中はさわらない
+  box.innerHTML = renderNomiTimeBox(slip);
+  const btn = document.getElementById("nomi-add-btn");
+  if (btn) btn.disabled = !nomiCanOrder(slip);
+}
+setInterval(tickNomiTime, 30000);
+
+// ---- 品目まとめ追加ピッカー ----
+function openItemPicker() {
+  pickerOpen = true;
+  pickerMode = "normal";
+  stagedItems = [];
+  activeItemTab = "liquor";
+  renderItemPicker();
+}
+// 飲み放題の注文(0円)を選ぶ画面
+function openNomiPicker() {
+  const slip = getCurrentSlip();
+  if (!nomiCanOrder(slip)) { alert("ラストオーダーの時間を過ぎています。延長するとまた注文できます。"); return; }
+  pickerOpen = true;
+  pickerMode = "nomi";
+  stagedItems = [];
+  activeItemTab = "liquor";
+  renderItemPicker();
+}
+// 飲み放題で頼めるお酒(700円以下)
+function nomiEligibleLiquors() {
+  return (menu.liquors || []).filter(l => (l.sellPrice || 0) > 0 && (l.sellPrice || 0) <= NOMI_PRICE_LIMIT);
+}
+function closeItemPicker() {
+  pickerOpen = false;
+  document.getElementById("item-picker-modal").innerHTML = "";
+}
+function pickerSetTab(tab) { activeItemTab = tab; renderItemPicker(); }
+function stagedTotal() { return stagedItems.reduce((s,i) => s + (i.price + itemExtra(i)) * (i.qty || 1), 0); }
+function stagedCount() { return stagedItems.reduce((s,i) => s + (i.qty || 1), 0); }
+function removeStaged(idx) { stagedItems.splice(idx, 1); renderItemPicker(); }
+function confirmStaged() {
+  const slip = getCurrentSlip();
+  stagedItems.forEach(i => {
+    const n = i.qty || 1;
+    for (let k = 0; k < n; k++) {
+      const { qty, ...one } = i;
+      slip.items.push({ ...one, id: nextItemId++, served: false });
+    }
+  });
+  closeItemPicker();
+  renderSlipView();
+  saveData();
+}
+// 今えらんでいる項目のリスト(画面下に出す共通部分)
+function renderStagedBlock(confirmLabel) {
+  return `
+    <h3 style="margin-top:16px;">今回追加する項目(${stagedCount()}点)</h3>
+    ${stagedItems.length === 0 ? '<div class="empty-msg">まだ選んでいません</div>' : stagedItems.map((i, idx) => `
+      <div class="qty-row picked">
+        <div class="qty-info">
+          <span class="qty-name">${escapeHtml(i.name)}</span>
+          ${i.mods && (i.mods.mixer || i.mods.mixerName || i.mods.style) ? `<span class="qty-price">${[mixerLabel(i.mods), i.mods.style || ''].filter(Boolean).join(' / ')}</span>` : ''}
+          <span class="qty-price">${yen(i.price + itemExtra(i))} × ${i.qty || 1} = <b>${yen((i.price + itemExtra(i)) * (i.qty || 1))}</b></span>
+        </div>
+        <div class="qty-ctrl">
+          <button onclick="stagedStep(${idx}, -1)">−</button>
+          <span class="qty-num">${i.qty || 1}</span>
+          <button onclick="stagedStep(${idx}, 1)">＋</button>
+          <button class="btn-danger-outline" style="width:auto; height:auto; border-radius:8px; font-size:12px; padding:6px 10px;" onclick="removeStaged(${idx})">取消</button>
+        </div>
+      </div>
+    `).join("")}
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:10px;">
+      <b>小計 ${yen(stagedTotal())}</b>
+      <div style="display:flex; gap:10px;">
+        <button class="btn-ghost" onclick="closeItemPicker()">キャンセル</button>
+        <button class="btn-primary" ${stagedItems.length===0 ? 'disabled' : ''} onclick="confirmStaged()">${confirmLabel}(${stagedCount()}点)</button>
+      </div>
+    </div>
+  `;
+}
+
+// 飲み放題の注文画面(0円のお酒だけ)
+function renderNomiPicker() {
+  const items = nomiEligibleLiquors().map(l => ({...l, cat:"liquor"}));
+  const modal = document.getElementById("item-picker-modal");
+  const prevBox = modal.querySelector(".modal-box");
+  const prevScroll = prevBox ? prevBox.scrollTop : 0;
+  modal.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal-box" style="max-width:600px; max-height:85vh; overflow-y:auto;">
+        <h3>🍻 飲み放題の注文(すべて0円)</h3>
+        <div class="nomi-note" style="margin-bottom:10px;">
+          ${NOMI_PRICE_LIMIT}円以下のお酒・ソフトドリンクが対象です。割材は＋100円のもの(600円のソフトドリンク)から選べます。<br>
+          飲み放題に入っていない商品は、伝票の「別途お酒・おつまみ等」から追加してください。
+        </div>
+        ${items.length === 0
+          ? '<div class="empty-msg">値段確認アプリに' + NOMI_PRICE_LIMIT + '円以下のお酒が登録されていません</div>'
+          : groupByCategory(items, LIQUOR_CATEGORIES).map(g => `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
+              <div class="item-grid">
+                ${g.items.map(i => { const n = stagedCountFor(i.name, "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>¥0<span class="nomi-tag">飲み放題</span></button>`; }).join("")}
+              </div>
+            `).join("")
+        }
+        ${renderStagedBlock("飲み放題として追加")}
+      </div>
+    </div>
+  `;
+  const box = modal.querySelector(".modal-box");
+  if (box && prevScroll) box.scrollTop = prevScroll;
+}
+
+function renderItemPicker() {
+  if (pickerMode === "nomi") { renderNomiPicker(); return; }
+  const liquorItems = menu.liquors.map(l => ({...l, cat:"liquor"}));
+  const bottleItems = menu.bottles.map(b => ({...b, cat:"bottle"}));
+  const dishItems = menu.dishes.map(d => ({...d, cat:"dish"}));
+  const modal = document.getElementById("item-picker-modal");
+  // 作り直しでスクロール位置が先頭に戻らないように、今の位置を覚えておく
+  const prevBox = modal.querySelector(".modal-box");
+  const prevScroll = prevBox ? prevBox.scrollTop : 0;
+  modal.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal-box" style="max-width:600px; max-height:85vh; overflow-y:auto;">
+        <h3>品目を選んで追加</h3>
+        <div class="item-tab-row">
+          <button class="${activeItemTab==='liquor' ? 'active':''}" onclick="pickerSetTab('liquor')">お酒</button>
+          <button class="${activeItemTab==='bottle' ? 'active':''}" onclick="pickerSetTab('bottle')">お酒(ボトル)</button>
+          <button class="${activeItemTab==='dish' ? 'active':''}" onclick="pickerSetTab('dish')">おつまみ・料理</button>
+        </div>
+        ${activeItemTab === 'liquor'
+          ? groupByCategory(liquorItems, LIQUOR_CATEGORIES).map(g => `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
+              <div class="item-grid">
+                ${g.items.map(i => { const n = stagedCountFor(i.name, "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.sellPrice)}</button>`; }).join("")}
+              </div>
+            `).join("")
+          : activeItemTab === 'bottle'
+          ? groupByCategory(bottleItems, BOTTLE_CATEGORIES).map(g => `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
+              <div class="item-grid">
+                ${g.items.map(i => { const n = stagedCountFor(i.name, "bottle"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "bottle")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`; }).join("")}
+              </div>
+            `).join("")
+            + `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">割材</h4>
+              ${mixerOnlyList().length === 0
+                ? '<div class="empty-msg">値段確認アプリにソフトドリンク(600円/800円)が登録されていません</div>'
+                : `<div class="item-grid">
+                    ${mixerOnlyList().map(m => { const n = stagedCountFor(mixerOnlyName(m.name), "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick="addMixerOnly(${m.id})"><b>${escapeHtml(m.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>＋${m.extra}円</button>`; }).join("")}
+                  </div>`
+              }
+            `
+          : groupByCategory(dishItems, DISH_CATEGORIES).map(g => `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
+              <div class="item-grid">
+                ${g.items.map(i => { const n = stagedCountFor(i.name, "dish"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${i.id}, "dish")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`; }).join("")}
+              </div>
+            `).join("")
+        }
+        ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'dish' ? dishItems.length===0 : false) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
+
+        ${activeItemTab === 'liquor' ? `
+        <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">カクテル</h4>
+        <div class="item-grid">
+          <button class="item-tile" onclick="openCocktailModal('recommend')"><b>おすすめカクテル</b>800円〜1500円</button>
+          <button class="item-tile" onclick="openCocktailModal('shake')"><b>シェイクカクテル</b>800円〜1500円</button>
+          <button class="item-tile" onclick="openSeasonalModal()"><b>季節のカクテル</b>${(menu.cocktails || []).length ? (menu.cocktails || []).length + "種類" : "未登録"}</button>
+        </div>
+
+        <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">ショット</h4>
+        <div class="item-grid">
+          <button class="item-tile" onclick="openShotModal()"><b>ショット</b>${menu.shots.length ? menu.shots.length + "種類" : "未登録"}</button>
+        </div>
+        ` : ''}
+
+        <div class="item-grid">
+          <button class="item-tile custom-tile" onclick="openCustomModal()">＋ 複雑な注文</button>
+        </div>
+        ${renderStagedBlock("伝票に追加")}
+      </div>
+    </div>
+  `;
+  const box = modal.querySelector(".modal-box");
+  if (box && prevScroll) box.scrollTop = prevScroll;
+}
+
+function renderPayBox() {
+  const methods = ["現金","カード","ペイペイ","その他"];
+  const ok = payDraft.method && (payDraft.method !== 'その他' || payDraft.note.trim());
+  return `
+    <div class="pay-box">
+      ${(() => { const n = (getCurrentSlip().items || []).filter(isPending).length;
+        return n ? `<div style="background:#fff6e5; border:1px solid #e8b657; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;"><b>未提供の注文が${n}件あります。</b>提供済みなら注文一覧の「提供」を押してください。</div>` : ''; })()}
+      <h3>お支払い方法を選択</h3>
+      <div class="choice-row">
+        ${methods.map(m => `<div class="choice-btn ${payDraft.method===m ? 'selected':''}" onclick="pickPayMethod('${m}')">${m}</div>`).join("")}
+      </div>
+      ${payDraft.method === 'その他' ? `
+        <label>内容を入力</label>
+        <div style="margin-bottom:14px;"><input type="text" id="pay-note-input" value="${escapeHtml(payDraft.note)}" placeholder="例: 電子マネー" oninput="payDraft.note=this.value; updatePayConfirmBtn();"></div>
+      ` : ''}
+      <div style="display:flex; gap:10px;">
+        <button class="btn-ghost" onclick="cancelPayment()">やめる</button>
+        <button class="btn-paid" id="pay-confirm-btn" ${ok ? '' : 'disabled'} onclick="finalizePaid()">お会計済にする</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOrderList(slip, isPaid) {
+  if (slip.items.length === 0) return `<div class="empty-msg">まだ注文がありません</div>`;
+  return slip.items.slice().reverse().map(i => {
+    const mods = [];
+    if (i.mods && (i.mods.mixer || i.mods.mixerName)) mods.push(mixerLabel(i.mods));
+    if (i.mods && i.mods.style) mods.push(i.mods.style);
+    const extra = itemExtra(i);
+    return `
+      <div class="order-row ${i.cancelled ? 'cancelled' : ''} ${isPending(i) ? 'pending' : ''}">
+        <div class="o-info">
+          <span class="o-name">${escapeHtml(i.name)}${i.nomi ? '<span class="nomi-tag">飲み放題</span>' : ''}</span>
+          ${mods.length ? `<span class="o-mods">${mods.join(" / ")}</span>` : ''}
+          ${!i.cancelled && i.served === true ? `<span class="served-tag">提供済み</span>` : ''}
+        </div>
+        <span class="o-price">${yen(i.price + extra)}</span>
+        ${(!isPaid && isPending(i)) ? `<button class="btn-serve" style="padding:7px 14px; font-size:13px;" onclick="serveItem(${slip.id}, ${i.id})">提供</button>` : ''}
+        ${(!isPaid && !i.cancelled && i.served === true) ? `<button class="btn-ghost" style="font-size:11px; padding:6px 8px;" onclick="unserveItem(${slip.id}, ${i.id})">戻す</button>` : ''}
+        ${!isPaid ? `<button class="btn-danger-outline" onclick="toggleCancelItem(${i.id})">${i.cancelled ? '取消を戻す' : 'キャンセル'}</button>` : ''}
+      </div>
+    `;
+  }).join("");
+}
+
+function setItemTab(tab) { activeItemTab = tab; renderSlipView(); }
+
+function backToTables() {
+  currentSlipId = null;
+  currentTable = null;
+  showView("tables");
+  renderTableGrid();
+}
+
+function toggleCancelItem(itemId) {
+  const slip = getCurrentSlip();
+  const item = slip.items.find(i => i.id === itemId);
+  if (item) item.cancelled = !item.cancelled;
+  renderSlipView();
+  saveData();
+}
+
+function startPayment() {
+  payUiOpen = true;
+  payDraft = { method: null, note: "" };
+  renderSlipView();
+}
+function cancelPayment() {
+  payUiOpen = false;
+  payDraft = { method: null, note: "" };
+  renderSlipView();
+}
+function pickPayMethod(m) {
+  payDraft.method = m;
+  if (m !== 'その他') payDraft.note = '';
+  renderSlipView();
+  updatePayConfirmBtn();
+}
+function updatePayConfirmBtn() {
+  const btn = document.getElementById("pay-confirm-btn");
+  if (!btn) return;
+  const ok = payDraft.method && (payDraft.method !== 'その他' || payDraft.note.trim());
+  btn.disabled = !ok;
+}
+function finalizePaid() {
+  const slip = getCurrentSlip();
+  slip.status = "paid";
+  slip.payment = { method: payDraft.method, note: payDraft.method === 'その他' ? payDraft.note.trim() : "" };
+  slip.paidAt = new Date().toISOString();
+  payUiOpen = false;
+  renderSlipView();
+  renderTableGrid();
+  saveData();
+}
+
+// ---- 品目タップ ----
+function onItemTap(id, cat) {
+  if (cat === "dish" || cat === "bottle") {
+    stageOrderItem(id, cat, null);
+    return;
+  }
+  // ビール・ワイン・ソフトドリンク・ホットドリンクは割材も飲み方もないのでそのまま追加
+  const src = menu.liquors.find(x => x.id === id);
+  if (src && NO_MODS_CATEGORIES.includes(src.category)) {
+    stageOrderItem(id, cat, null);
+    return;
+  }
+  // それ以外のお酒 -> 飲み方モーダル(モーダルの上にさらに開く)
+  openModifierModal(id);
+}
+
+// ---- 個数(qty)つきで一時リストに入れる。同じ品目・同じ飲み方ならまとめる ----
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1500);
+}
+
+// この品目が今いくつ一時リストに入っているか(タイルに出す用)
+function stagedCountFor(name, cat) {
+  return stagedItems.filter(x => x.name === name && x.cat === cat)
+                    .reduce((n, x) => n + (x.qty || 1), 0);
+}
+
+function stagedKey(i) {
+  return [i.name, i.cat, i.price, JSON.stringify(i.mods || null), i.custom ? 1 : 0, i.nomi ? 1 : 0].join("|");
+}
+function addStaged(entry, qty) {
+  const n = Math.max(1, qty || 1);
+  const key = stagedKey(entry);
+  const hit = stagedItems.find(x => stagedKey(x) === key);
+  if (hit) { hit.qty = (hit.qty || 1) + n; return; }
+  stagedItems.push({ ...entry, qty: n });
+}
+function stagedStep(idx, delta) {
+  const it = stagedItems[idx];
+  if (!it) return;
+  const next = (it.qty || 1) + delta;
+  if (next <= 0) { stagedItems.splice(idx, 1); } else { it.qty = Math.min(99, next); }
+  renderItemPicker();
+}
+
+function stageOrderItem(id, cat, mods) {
+  let source;
+  if (cat === "dish") { source = menu.dishes.find(x => x.id === id); }
+  else if (cat === "bottle") { source = menu.bottles.find(x => x.id === id); }
+  else { source = menu.liquors.find(x => x.id === id); }
+  if (!source) return;
+  const isNomi = pickerMode === "nomi";
+  const price = isNomi ? 0 : (cat === "liquor" ? source.sellPrice : source.price);
+  const entry = { id: nextItemId++, name: source.name, cat, price, mods: mods || null, cancelled: false, orderedAt: new Date().toISOString() };
+  if (isNomi) entry.nomi = true;
+  addStaged(entry, 1);
+  const modLabel = mods && (mods.style || mods.mixer || mods.mixerName) ? `(${[mixerLabel(mods), mods.style || ""].filter(Boolean).join(" / ")})` : "";
+  showToast(`${source.name}${modLabel} を追加しました${isNomi ? "(飲み放題)" : ""}`);
+  renderItemPicker();
+}
+
+const DRINK_STYLE_OPTIONS = [
+  { key: "mizuwari", label: "水割り", mixer: 0, style: "水割り" },
+  { key: "rock", label: "ロック", mixer: 0, style: "ロック" },
+  { key: "straight", label: "ストレート", mixer: 0, style: "ストレート" },
+  { key: "mix100", label: "割材(+100)", mixer: 100, style: null },
+  { key: "mix200", label: "割材(+200)", mixer: 200, style: null }
+];
+let modalState = { choiceKey: null, mixerName: null };
+// 飲み放題のときは「＋200円の割材」は選べない
+function drinkStyleOptions() {
+  return pickerMode === "nomi"
+    ? DRINK_STYLE_OPTIONS.filter(o => o.mixer !== 200)
+    : DRINK_STYLE_OPTIONS;
+}
+
+// 割材はソフトドリンクと同じもの。+100円 → 600円のソフトドリンク、+200円 → 800円のソフトドリンク
+const MIXER_PRICE_BY_EXTRA = { 100: 600, 200: 800 };
+function mixerOptions(extra) {
+  const price = MIXER_PRICE_BY_EXTRA[extra];
+  return (menu.liquors || [])
+    .filter(l => l.category === "ソフトドリンク" && (l.sellPrice || 0) === price)
+    .slice()
+    .sort((a, b) => JA_COLLATOR.compare(a.name || "", b.name || ""));
+}
+// 値段(600/800円)から割材の追加料金(+100/+200)を逆引き
+const MIXER_EXTRA_BY_PRICE = { 600: 100, 800: 200 };
+// 割材だけを注文する用の一覧(ボトルを入れたお客様向け)。+100 → +200 の順、同額なら五十音順
+function mixerOnlyList() {
+  return (menu.liquors || [])
+    .filter(l => l.category === "ソフトドリンク" && MIXER_EXTRA_BY_PRICE[l.sellPrice || 0])
+    .map(l => ({ ...l, extra: MIXER_EXTRA_BY_PRICE[l.sellPrice] }))
+    .sort((a, b) => (a.extra - b.extra) || JA_COLLATOR.compare(a.name || "", b.name || ""));
+}
+function mixerOnlyName(name) { return `${name}(割材)`; }
+function addMixerOnly(id) {
+  const m = mixerOnlyList().find(x => x.id === id);
+  if (!m) return;
+  addStaged({
+    id: nextItemId++, name: mixerOnlyName(m.name), cat: "liquor", price: m.extra,
+    mods: null, mixerOnly: true, cancelled: false, orderedAt: new Date().toISOString()
+  }, 1);
+  showToast(`${mixerOnlyName(m.name)} を追加しました`);
+  renderItemPicker();
+}
+
+// 注文一覧などに出す文字(例: 割材+100(コーラ))
+function mixerLabel(mods) {
+  if (!mods) return "";
+  // 飲み放題は追加料金なしなので「割材(コーラ)」だけを出す
+  if (!mods.mixer) return mods.mixerName ? `割材(${mods.mixerName})` : "";
+  return `割材+${mods.mixer}${mods.mixerName ? `(${mods.mixerName})` : ""}`;
+}
+function openModifierModal(liquorId) {
+  modalState = { choiceKey: null };
+  const liquor = menu.liquors.find(x => x.id === liquorId);
+  const modal = document.getElementById("modifier-modal");
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModifierModal(event)">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <h3>${escapeHtml(liquor.name)} の飲み方(必須・いずれか1つ)${pickerMode === "nomi" ? '<span class="nomi-tag">飲み放題 0円</span>' : ''}</h3>
+        <div class="choice-row" id="style-choice-row">
+          ${drinkStyleOptions().map(o => `<div class="choice-btn" id="style-opt-${o.key}" onclick="pickDrinkStyle('${o.key}')">${pickerMode === "nomi" && o.mixer ? "割材" : o.label}</div>`).join("")}
+        </div>
+        <div id="mixer-wrap" style="display:none; margin-top:6px;">
+          <label>割材を選んでください(必須)</label>
+          <div class="choice-row" id="mixer-choice-row"></div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
+          <button class="btn-primary" id="liquor-confirm-btn" disabled onclick="confirmAddLiquor(${liquorId})">この内容で追加</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function pickDrinkStyle(key) {
+  modalState.choiceKey = key;
+  modalState.mixerName = null;
+  drinkStyleOptions().forEach(o => {
+    const el = document.getElementById(`style-opt-${o.key}`);
+    if (el) el.classList.toggle("selected", o.key === key);
+  });
+  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === key);
+  const wrap = document.getElementById("mixer-wrap");
+  const row = document.getElementById("mixer-choice-row");
+  const btn = document.getElementById("liquor-confirm-btn");
+  if (opt && opt.mixer) {
+    const list = mixerOptions(opt.mixer);
+    wrap.style.display = "";
+    if (list.length === 0) {
+      row.innerHTML = `<div class="empty-msg" style="padding:6px 0;">値段確認アプリに${MIXER_PRICE_BY_EXTRA[opt.mixer]}円のソフトドリンクが登録されていません</div>`;
+      btn.disabled = false; // 登録がないときは割材の指定なしで追加できる
+    } else {
+      row.innerHTML = list.map(m => `<div class="choice-btn" id="mixer-opt-${m.id}" onclick="pickMixer(${m.id})">${escapeHtml(m.name)}</div>`).join("");
+      btn.disabled = true;  // 割材を選ぶまでは押せない
+    }
+  } else {
+    wrap.style.display = "none";
+    row.innerHTML = "";
+    btn.disabled = false;
+  }
+}
+
+function pickMixer(id) {
+  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === modalState.choiceKey);
+  if (!opt) return;
+  const list = mixerOptions(opt.mixer);
+  const picked = list.find(m => m.id === id);
+  if (!picked) return;
+  modalState.mixerName = picked.name;
+  list.forEach(m => {
+    const el = document.getElementById(`mixer-opt-${m.id}`);
+    if (el) el.classList.toggle("selected", m.id === id);
+  });
+  document.getElementById("liquor-confirm-btn").disabled = false;
+}
+function closeModifierModal(e) {
+  document.getElementById("modifier-modal").innerHTML = "";
+}
+function confirmAddLiquor(liquorId) {
+  if (!modalState.choiceKey) return;
+  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === modalState.choiceKey);
+  // 飲み放題のときは割材の追加料金をとらない(0円のまま)
+  const mixer = pickerMode === "nomi" ? 0 : opt.mixer;
+  stageOrderItem(liquorId, "liquor", { mixer, style: opt.style, mixerName: modalState.mixerName || null });
+  closeModifierModal();
+}
+
+// ---- おすすめカクテル・シェイクカクテル(800円〜1500円を選択) ----
+// ---- ショット / 季節のカクテル(割材なし・数量をプラス/マイナスで指定) ----
+// kind: "shot" = menu.shots, "seasonal" = menu.cocktails(値段確認アプリの「季節のカクテル」)
+const QTY_PICKERS = {
+  shot:     { label: "ショット",      list: () => menu.shots || [],     cat: "shot",  empty: "値段確認アプリの「ショット」タブでまだ登録がありません" },
+  seasonal: { label: "季節のカクテル", list: () => menu.cocktails || [], cat: "cocktail",  empty: "値段確認アプリの「季節のカクテル」タブでまだ登録がありません" }
+};
+let qtyPickKind = "shot";
+let qtyPickQty = {};
+
+function qtyPickList() {
+  // 値段の安い順 → 同じ値段なら五十音順
+  return QTY_PICKERS[qtyPickKind].list().slice().sort((a, b) => {
+    const d = (a.price || 0) - (b.price || 0);
+    if (d !== 0) return d;
+    return JA_COLLATOR.compare(a.name || "", b.name || "");
+  });
+}
+function qtyPickCount() { return Object.values(qtyPickQty).reduce((s, n) => s + n, 0); }
+function qtyPickYen() { return qtyPickList().reduce((s, it) => s + (qtyPickQty[it.id] || 0) * it.price, 0); }
+
+function openShotModal() { openQtyPicker("shot"); }
+function openSeasonalModal() { openQtyPicker("seasonal"); }
+function openQtyPicker(kind) {
+  qtyPickKind = kind;
+  qtyPickQty = {};
+  renderQtyPicker();
+}
+function qtyPickStep(id, delta) {
+  const cur = qtyPickQty[id] || 0;
+  const next = Math.max(0, Math.min(99, cur + delta));
+  if (next === 0) { delete qtyPickQty[id]; } else { qtyPickQty[id] = next; }
+  // 画面全体を作り直すとスクロールが先頭に戻ってしまうので、変わったところだけ書き換える
+  const row = document.getElementById(`qp-row-${id}`);
+  if (!row) { renderQtyPicker(); return; }
+  row.classList.toggle("picked", next > 0);
+  const num = document.getElementById(`qp-num-${id}`);
+  if (num) num.textContent = next;
+  const minus = document.getElementById(`qp-minus-${id}`);
+  if (minus) minus.disabled = (next === 0);
+  const total = document.getElementById("qp-total");
+  if (total) total.textContent = `小計 ${yen(qtyPickYen())}`;
+  const btn = document.getElementById("shot-confirm-btn");
+  if (btn) { btn.disabled = qtyPickCount() === 0; btn.textContent = `追加(${qtyPickCount()}点)`; }
+}
+function renderQtyPicker() {
+  const conf = QTY_PICKERS[qtyPickKind];
+  const list = qtyPickList();
+  const modal = document.getElementById("modifier-modal");
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModifierModal(event)">
+      <div class="modal-box" onclick="event.stopPropagation()" style="max-width:520px; max-height:85vh; overflow-y:auto;">
+        <h3>${escapeHtml(conf.label)}(数量を選んでください)</h3>
+        ${list.length === 0
+          ? `<div class="empty-msg">${conf.empty}</div>`
+          : list.map(it => {
+              const n = qtyPickQty[it.id] || 0;
+              return `
+                <div class="qty-row ${n > 0 ? 'picked' : ''}" id="qp-row-${it.id}">
+                  <div class="qty-info">
+                    <span class="qty-name">${escapeHtml(it.name)}</span>
+                    <span class="qty-price">${yen(it.price)}</span>
+                  </div>
+                  <div class="qty-ctrl">
+                    <button id="qp-minus-${it.id}" onclick="qtyPickStep(${it.id}, -1)" ${n === 0 ? 'disabled' : ''}>−</button>
+                    <span class="qty-num" id="qp-num-${it.id}">${n}</span>
+                    <button onclick="qtyPickStep(${it.id}, 1)">＋</button>
+                  </div>
+                </div>
+              `;
+            }).join("")
+        }
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:10px;">
+          <b id="qp-total">小計 ${yen(qtyPickYen())}</b>
+          <div style="display:flex; gap:10px;">
+            <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
+            <button class="btn-primary" id="shot-confirm-btn" ${qtyPickCount() === 0 ? 'disabled' : ''} onclick="confirmQtyPick()">追加(${qtyPickCount()}点)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function confirmQtyPick() {
+  if (qtyPickCount() === 0) return;
+  const conf = QTY_PICKERS[qtyPickKind];
+  qtyPickList().forEach(it => {
+    const n = qtyPickQty[it.id] || 0;
+    if (n > 0) {
+      addStaged({
+        id: nextItemId++, name: it.name, cat: conf.cat, price: it.price,
+        mods: null, cancelled: false, orderedAt: new Date().toISOString()
+      }, n);
+    }
+  });
+  qtyPickQty = {};
+  closeModifierModal();
+  renderItemPicker();
+}
+
+function openCocktailModal(kind) {
+  const label = kind === 'recommend' ? 'おすすめカクテル' : 'シェイクカクテル';
+  modalState = { cocktailPrice: null };
+  const modal = document.getElementById("modifier-modal");
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModifierModal(event)">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <h3>${escapeHtml(label)}の金額を選択(必須)</h3>
+        <div class="choice-row" id="cocktail-price-row">
+          ${COCKTAIL_PRICE_OPTIONS.map(p => `<div class="choice-btn" id="cocktail-opt-${p}" onclick="pickCocktailPrice(${p})">${yen(p)}</div>`).join("")}
+        </div>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
+          <button class="btn-primary" id="cocktail-confirm-btn" disabled onclick="confirmCocktail('${label}')">この内容で追加</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function pickCocktailPrice(p) {
+  modalState.cocktailPrice = p;
+  COCKTAIL_PRICE_OPTIONS.forEach(o => {
+    document.getElementById(`cocktail-opt-${o}`).classList.toggle("selected", o === p);
+  });
+  document.getElementById("cocktail-confirm-btn").disabled = false;
+}
+function confirmCocktail(label) {
+  if (!modalState.cocktailPrice) return;
+  addStaged({ id: nextItemId++, name: label, cat: "cocktail", price: modalState.cocktailPrice, mods: null, cancelled: false, orderedAt: new Date().toISOString() }, 1);
+  closeModifierModal();
+  renderItemPicker();
+}
+
+// ---- 複雑な注文(自由入力) ----
+let customMixerExtra = 0; // 割材の追加金額(0 / 100 / 200)
+let customMixerOpen = false;
+
+function openCustomModal() {
+  const catLabel = activeItemTab === 'liquor' ? 'お酒' : 'おつまみ・料理';
+  customMixerExtra = 0;
+  customMixerOpen = false;
+  const modal = document.getElementById("modifier-modal");
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModifierModal(event)">
+      <div class="modal-box" onclick="event.stopPropagation()">
+        <h3>複雑な注文(${catLabel})</h3>
+        <label>注文内容</label>
+        <div style="margin-bottom:14px;"><input type="text" id="custom-desc-input" placeholder="例: 白ワインをロックで、多めに"></div>
+        <label>金額(円)</label>
+        <div style="margin-bottom:14px;"><input type="number" id="custom-price-input" placeholder="例: 900"></div>
+        <div style="margin-bottom:14px;">
+          <button type="button" class="btn-ghost" id="mixer-toggle-btn" onclick="toggleMixerOptions()">割材</button>
+          <div id="mixer-options" style="display:none; margin-top:8px; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn-ghost mixer-opt-btn" data-extra="100" onclick="selectMixerExtra(100)">＋100円</button>
+            <button type="button" class="btn-ghost mixer-opt-btn" data-extra="200" onclick="selectMixerExtra(200)">＋200円</button>
+          </div>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
+          <button class="btn-primary" onclick="confirmCustomOrder()">この内容で追加</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function toggleMixerOptions() {
+  customMixerOpen = !customMixerOpen;
+  const box = document.getElementById("mixer-options");
+  box.style.display = customMixerOpen ? "flex" : "none";
+}
+function selectMixerExtra(amount) {
+  customMixerExtra = (customMixerExtra === amount) ? 0 : amount; // もう一度押すと選択解除
+  document.querySelectorAll(".mixer-opt-btn").forEach(btn => {
+    const isSelected = parseInt(btn.dataset.extra, 10) === customMixerExtra;
+    btn.classList.toggle("active", isSelected);
+  });
+}
+function confirmCustomOrder() {
+  const desc = document.getElementById("custom-desc-input").value.trim();
+  const basePrice = parseFloat(document.getElementById("custom-price-input").value);
+  if (!desc || !basePrice) { return; }
+  const price = basePrice + (customMixerExtra || 0);
+  const name = customMixerExtra ? `${desc}(割材+${customMixerExtra}円)` : desc;
+  addStaged({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() }, 1);
+  closeModifierModal();
+  renderItemPicker();
+}
+
+document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
+loadData();
+</script>
+</body>
+</html>
