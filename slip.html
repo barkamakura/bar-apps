@@ -123,6 +123,25 @@
   }
   .qty-ctrl button:disabled { opacity: 0.35; cursor: default; }
   .qty-ctrl .qty-num { min-width: 26px; text-align: center; font-size: 16px; font-weight: 700; }
+
+  /* 未提供の注文 */
+  .pending-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: #fff6e5; border: 1px solid #e8b657; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 8px;
+  }
+  .pending-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .pending-table { font-size: 15px; font-weight: 700; }
+  .pending-name { font-size: 13px; }
+  .pending-sub { font-size: 11px; color: var(--text-muted); }
+  .btn-serve {
+    background: #e8940c; color: #fff; border: none; border-radius: 8px;
+    padding: 11px 18px; font-size: 14px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-serve:active { opacity: .85; }
+  .served-tag { font-size: 11px; color: var(--good); font-weight: 600; }
+  .order-row.pending { background: #fff6e5; border: 1px solid #e8b657; }
 </style>
 </head>
 <body>
@@ -137,6 +156,10 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
 
   <div id="view-tables">
+    <div class="panel" id="pending-panel">
+      <h2>未提供の注文(受注順)</h2>
+      <div id="pending-list"></div>
+    </div>
     <div class="panel">
       <h2>卓を選択</h2>
       <div class="table-grid" id="table-grid"></div>
@@ -192,6 +215,8 @@ const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 const CHARGE_PER_PERSON = 500;
 const DISH_CATEGORIES = ["おつまみ","料理"];
+// このジャンルは割材も飲み方もないので、タップしたらそのまま追加する
+const NO_MODS_CATEGORIES = ["ビール","ワイン","ソフトドリンク","ホットドリンク"];
 const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク","シャンパン"];
 const BOTTLE_CATEGORIES = ["ワイン","シャンパン","その他"];
 const COCKTAIL_PRICE_OPTIONS = [800,900,1000,1100,1200,1300,1400,1500];
@@ -295,13 +320,88 @@ function showView(name) {
 }
 
 // ---- 卓グリッド ----
+// ---- 提供の管理 ----
+// served が undefined の注文(この機能より前に入れたもの)は「提供済み」として扱う
+function isPending(i) { return i.served === false && !i.cancelled; }
+
+function serveItem(slipId, itemId) {
+  const slip = slips.find(s => s.id === slipId);
+  if (!slip) return;
+  const item = (slip.items || []).find(i => i.id === itemId);
+  if (!item) return;
+  item.served = true;
+  item.servedAt = new Date().toISOString();
+  renderPendingList();
+  renderTableGrid();
+  if (currentSlipId) renderSlipView();
+  saveData();
+}
+
+function unserveItem(slipId, itemId) {
+  const slip = slips.find(s => s.id === slipId);
+  if (!slip) return;
+  const item = (slip.items || []).find(i => i.id === itemId);
+  if (!item) return;
+  item.served = false;
+  delete item.servedAt;
+  renderPendingList();
+  renderTableGrid();
+  if (currentSlipId) renderSlipView();
+  saveData();
+}
+
+function pendingOrders() {
+  const out = [];
+  slips.filter(s => s.status === "open").forEach(s => {
+    (s.items || []).filter(isPending).forEach(i => out.push({ slip: s, item: i }));
+  });
+  // 受注順(古いものが上)
+  out.sort((a, b) => new Date(a.item.orderedAt || 0) - new Date(b.item.orderedAt || 0));
+  return out;
+}
+
+function waitedLabel(iso) {
+  if (!iso) return "";
+  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return "たった今";
+  if (min < 60) return `${min}分前`;
+  return `${Math.floor(min / 60)}時間${min % 60}分前`;
+}
+
+function renderPendingList() {
+  const el = document.getElementById("pending-list");
+  if (!el) return;
+  const list = pendingOrders();
+  const head = document.querySelector("#pending-panel h2");
+  if (head) head.textContent = `未提供の注文(受注順) ${list.length}件`;
+  if (!loaded) { el.innerHTML = ""; return; }
+  if (list.length === 0) { el.innerHTML = `<div class="empty-msg">未提供の注文はありません</div>`; return; }
+  el.innerHTML = list.map(({ slip, item }) => {
+    const mods = [];
+    if (item.mods && item.mods.mixer) mods.push(`割材+${item.mods.mixer}`);
+    if (item.mods && item.mods.style) mods.push(item.mods.style);
+    return `
+      <div class="pending-row">
+        <div class="pending-info">
+          <span class="pending-table">${slip.table} 卓</span>
+          <span class="pending-name">${escapeHtml(item.name)}${mods.length ? ` <span class="pending-sub">(${mods.join(" / ")})</span>` : ''}</span>
+          <span class="pending-sub">${waitedLabel(item.orderedAt)}</span>
+        </div>
+        <button class="btn-serve" onclick="serveItem(${slip.id}, ${item.id})">提供</button>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderTableGrid() {
+  renderPendingList();
   const grid = document.getElementById("table-grid");
   grid.innerHTML = TABLES.map(t => {
     const slip = openSlipFor(t);
     if (slip) {
       const total = calcTotal(slip);
-      return `<div class="table-btn occupied" onclick="selectTable('${t}')">${t}<span class="t-sub">対応中 ${yen(total)}</span></div>`;
+      const pend = (slip.items || []).filter(isPending).length;
+      return `<div class="table-btn occupied" onclick="selectTable('${t}')">${t}<span class="t-sub">対応中 ${yen(total)}${pend ? ` ・未提供${pend}` : ''}</span></div>`;
     }
     return `<div class="table-btn" onclick="selectTable('${t}')">${t}<span class="t-sub">空席</span></div>`;
   }).join("");
@@ -459,7 +559,7 @@ function confirmStaged() {
     const n = i.qty || 1;
     for (let k = 0; k < n; k++) {
       const { qty, ...one } = i;
-      slip.items.push({ ...one, id: nextItemId++ });
+      slip.items.push({ ...one, id: nextItemId++, served: false });
     }
   });
   closeItemPicker();
@@ -471,6 +571,9 @@ function renderItemPicker() {
   const bottleItems = menu.bottles.map(b => ({...b, cat:"bottle"}));
   const dishItems = menu.dishes.map(d => ({...d, cat:"dish"}));
   const modal = document.getElementById("item-picker-modal");
+  // 作り直しでスクロール位置が先頭に戻らないように、今の位置を覚えておく
+  const prevBox = modal.querySelector(".modal-box");
+  const prevScroll = prevBox ? prevBox.scrollTop : 0;
   modal.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal-box" style="max-width:600px; max-height:85vh; overflow-y:auto;">
@@ -503,6 +606,7 @@ function renderItemPicker() {
         }
         ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'bottle' ? bottleItems.length===0 : dishItems.length===0) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
 
+        ${activeItemTab === 'liquor' ? `
         <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">カクテル</h4>
         <div class="item-grid">
           <button class="item-tile" onclick="openCocktailModal('recommend')"><b>おすすめカクテル</b>800円〜1500円</button>
@@ -514,6 +618,7 @@ function renderItemPicker() {
         <div class="item-grid">
           <button class="item-tile" onclick="openShotModal()"><b>ショット</b>${menu.shots.length ? menu.shots.length + "種類" : "未登録"}</button>
         </div>
+        ` : ''}
 
         <div class="item-grid">
           <button class="item-tile custom-tile" onclick="openCustomModal()">＋ 複雑な注文</button>
@@ -544,6 +649,8 @@ function renderItemPicker() {
       </div>
     </div>
   `;
+  const box = modal.querySelector(".modal-box");
+  if (box && prevScroll) box.scrollTop = prevScroll;
 }
 
 function renderPayBox() {
@@ -551,6 +658,8 @@ function renderPayBox() {
   const ok = payDraft.method && (payDraft.method !== 'その他' || payDraft.note.trim());
   return `
     <div class="pay-box">
+      ${(() => { const n = (getCurrentSlip().items || []).filter(isPending).length;
+        return n ? `<div style="background:#fff6e5; border:1px solid #e8b657; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:13px;"><b>未提供の注文が${n}件あります。</b>提供済みなら注文一覧の「提供」を押してください。</div>` : ''; })()}
       <h3>お支払い方法を選択</h3>
       <div class="choice-row">
         ${methods.map(m => `<div class="choice-btn ${payDraft.method===m ? 'selected':''}" onclick="pickPayMethod('${m}')">${m}</div>`).join("")}
@@ -575,12 +684,15 @@ function renderOrderList(slip, isPaid) {
     if (i.mods && i.mods.style) mods.push(i.mods.style);
     const extra = itemExtra(i);
     return `
-      <div class="order-row ${i.cancelled ? 'cancelled' : ''}">
+      <div class="order-row ${i.cancelled ? 'cancelled' : ''} ${isPending(i) ? 'pending' : ''}">
         <div class="o-info">
           <span class="o-name">${escapeHtml(i.name)}</span>
           ${mods.length ? `<span class="o-mods">${mods.join(" / ")}</span>` : ''}
+          ${!i.cancelled && i.served === true ? `<span class="served-tag">提供済み</span>` : ''}
         </div>
         <span class="o-price">${yen(i.price + extra)}</span>
+        ${(!isPaid && isPending(i)) ? `<button class="btn-serve" style="padding:7px 14px; font-size:13px;" onclick="serveItem(${slip.id}, ${i.id})">提供</button>` : ''}
+        ${(!isPaid && !i.cancelled && i.served === true) ? `<button class="btn-ghost" style="font-size:11px; padding:6px 8px;" onclick="unserveItem(${slip.id}, ${i.id})">戻す</button>` : ''}
         ${!isPaid ? `<button class="btn-danger-outline" onclick="toggleCancelItem(${i.id})">${i.cancelled ? '取消を戻す' : 'キャンセル'}</button>` : ''}
       </div>
     `;
@@ -643,7 +755,13 @@ function onItemTap(id, cat) {
     stageOrderItem(id, cat, null);
     return;
   }
-  // liquor -> 飲み方モーダル(モーダルの上にさらに開く)
+  // ビール・ワイン・ソフトドリンク・ホットドリンクは割材も飲み方もないのでそのまま追加
+  const src = menu.liquors.find(x => x.id === id);
+  if (src && NO_MODS_CATEGORIES.includes(src.category)) {
+    stageOrderItem(id, cat, null);
+    return;
+  }
+  // それ以外のお酒 -> 飲み方モーダル(モーダルの上にさらに開く)
   openModifierModal(id);
 }
 
@@ -753,7 +871,18 @@ function qtyPickStep(id, delta) {
   const cur = qtyPickQty[id] || 0;
   const next = Math.max(0, Math.min(99, cur + delta));
   if (next === 0) { delete qtyPickQty[id]; } else { qtyPickQty[id] = next; }
-  renderQtyPicker();
+  // 画面全体を作り直すとスクロールが先頭に戻ってしまうので、変わったところだけ書き換える
+  const row = document.getElementById(`qp-row-${id}`);
+  if (!row) { renderQtyPicker(); return; }
+  row.classList.toggle("picked", next > 0);
+  const num = document.getElementById(`qp-num-${id}`);
+  if (num) num.textContent = next;
+  const minus = document.getElementById(`qp-minus-${id}`);
+  if (minus) minus.disabled = (next === 0);
+  const total = document.getElementById("qp-total");
+  if (total) total.textContent = `小計 ${yen(qtyPickYen())}`;
+  const btn = document.getElementById("shot-confirm-btn");
+  if (btn) { btn.disabled = qtyPickCount() === 0; btn.textContent = `追加(${qtyPickCount()}点)`; }
 }
 function renderQtyPicker() {
   const conf = QTY_PICKERS[qtyPickKind];
@@ -768,14 +897,14 @@ function renderQtyPicker() {
           : list.map(it => {
               const n = qtyPickQty[it.id] || 0;
               return `
-                <div class="qty-row ${n > 0 ? 'picked' : ''}">
+                <div class="qty-row ${n > 0 ? 'picked' : ''}" id="qp-row-${it.id}">
                   <div class="qty-info">
                     <span class="qty-name">${escapeHtml(it.name)}</span>
                     <span class="qty-price">${yen(it.price)}</span>
                   </div>
                   <div class="qty-ctrl">
-                    <button onclick="qtyPickStep(${it.id}, -1)" ${n === 0 ? 'disabled' : ''}>−</button>
-                    <span class="qty-num">${n}</span>
+                    <button id="qp-minus-${it.id}" onclick="qtyPickStep(${it.id}, -1)" ${n === 0 ? 'disabled' : ''}>−</button>
+                    <span class="qty-num" id="qp-num-${it.id}">${n}</span>
                     <button onclick="qtyPickStep(${it.id}, 1)">＋</button>
                   </div>
                 </div>
@@ -783,7 +912,7 @@ function renderQtyPicker() {
             }).join("")
         }
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:10px;">
-          <b>小計 ${yen(qtyPickYen())}</b>
+          <b id="qp-total">小計 ${yen(qtyPickYen())}</b>
           <div style="display:flex; gap:10px;">
             <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
             <button class="btn-primary" id="shot-confirm-btn" ${qtyPickCount() === 0 ? 'disabled' : ''} onclick="confirmQtyPick()">追加(${qtyPickCount()}点)</button>
