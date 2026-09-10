@@ -684,7 +684,9 @@ function renderSlipView() {
       <span class="amount">${yen(total)}</span>
     </div>
 
-    ${!isPaid ? `<div style="margin-bottom:18px;"><button class="btn-primary" style="width:100%" onclick="openItemPicker()">＋ 追加${nomi ? '(別途料金)' : ''}</button></div>` : ''}
+    <div id="nomi-panel">${renderNomiPanel(slip, isPaid)}</div>
+
+    ${(!isPaid && !nomi) ? `<div style="margin-bottom:18px;"><button class="btn-primary" style="width:100%" onclick="openItemPicker()">＋ 追加</button></div>` : ''}
 
     <h2 style="font-size:14px; margin:0 0 10px;">注文内容</h2>
     <div id="order-list">${renderOrderList(slip, isPaid)}</div>
@@ -695,8 +697,6 @@ function renderSlipView() {
     </div>
 
     ${(!isPaid && payUiOpen) ? renderPayBox() : ''}
-
-    <div id="nomi-panel">${renderNomiPanel(slip, isPaid)}</div>
   `;
 }
 
@@ -748,16 +748,6 @@ function saveNomiPlan() {
   renderTableGrid();
   saveData();
 }
-function removeNomiPlan() {
-  const slip = getCurrentSlip();
-  const paidItems = (slip.items || []).filter(i => i.nomi && !i.cancelled).length;
-  if (!confirm(`飲み放題プランを解除します。\n${paidItems ? `飲み放題でつけた${paidItems}点の注文は0円のまま残ります。\n` : ""}よろしいですか?`)) return;
-  delete slip.nomihodai;
-  nomiSetupOpen = false;
-  renderSlipView();
-  renderTableGrid();
-  saveData();
-}
 function startNomiClock() {
   const slip = getCurrentSlip();
   const n = nomiPlan(slip);
@@ -802,12 +792,14 @@ function extendNomi(delta) {
 
 function renderNomiPanel(slip, isPaid) {
   const n = nomiPlan(slip);
+  // 通常プランの伝票には飲み放題の欄を出さない(プランは伝票を作るときに決める)
+  if (!n) return "";
 
-  // --- まだ設定していない / 設定画面を開いている ---
+  // --- 人数を変更している最中 ---
   if (nomiSetupOpen && !isPaid) {
     return `
-      <div class="panel nomi-panel" style="margin-top:24px;">
-        <h2>🍻 飲み放題プラン ${n ? "の人数を変更" : "を設定"}</h2>
+      <div class="panel nomi-panel" style="margin-bottom:18px;">
+        <h2>🍻 飲み放題プラン の人数を変更</h2>
         <div class="nomi-note">1人 ${yen(NOMI_PER_PERSON)}(2時間)・延長1時間ごとに1人 ${yen(NOMI_EXTEND_PER_PERSON)}・チャージなし</div>
         ${slip.count < NOMI_MIN_PEOPLE ? `<div class="nomi-warn">この伝票は${slip.count}名です。飲み放題は${NOMI_MIN_PEOPLE}名様からのプランです。</div>` : ''}
         <label style="margin-top:10px;">飲み放題の人数(${NOMI_MIN_PEOPLE}名以上)</label>
@@ -818,29 +810,17 @@ function renderNomiPanel(slip, isPaid) {
           : `<span style="color:var(--danger); font-weight:600;">${NOMI_MIN_PEOPLE}名以上を入れてください</span>`}</div>
         <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
           <button class="btn-ghost" onclick="closeNomiSetup()">やめる</button>
-          <button class="btn-primary" id="nomi-save-btn" ${nomiSetupCount ? '' : 'disabled'} onclick="saveNomiPlan()">${n ? "人数を変更する" : "この人数で設定する"}</button>
-          ${n ? `<button class="btn-danger-outline" onclick="removeNomiPlan()">プランを解除</button>` : ''}
+          <button class="btn-primary" id="nomi-save-btn" ${nomiSetupCount ? '' : 'disabled'} onclick="saveNomiPlan()">人数を変更する</button>
         </div>
       </div>
     `;
   }
 
-  if (!n) {
-    if (isPaid) return "";
-    return `
-      <div class="panel nomi-panel" style="margin-top:24px;">
-        <h2>🍻 飲み放題プラン</h2>
-        <div class="nomi-note">${NOMI_MIN_PEOPLE}名様から・1人 ${yen(NOMI_PER_PERSON)}(2時間)・チャージなし</div>
-        <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="openNomiSetup()">飲み放題プランを設定する</button>
-      </div>
-    `;
-  }
-
-  // --- 設定済み ---
+  // --- 通常表示 ---
   const t = nomiTiming(slip);
   const canOrder = nomiCanOrder(slip);
   return `
-    <div class="panel nomi-panel" style="margin-top:24px;">
+    <div class="panel nomi-panel" style="margin-bottom:18px;">
       <h2>🍻 飲み放題プラン ${n.count}名</h2>
 
       <div class="nomi-fee-line">
@@ -865,7 +845,6 @@ function renderNomiPanel(slip, isPaid) {
 
         <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
           <button class="btn-ghost" onclick="openNomiSetup()">人数を変更</button>
-          <button class="btn-danger-outline" onclick="removeNomiPlan()">プランを解除</button>
         </div>
       ` : ''}
     </div>
