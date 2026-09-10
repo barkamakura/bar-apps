@@ -105,6 +105,24 @@
   }
   .modal-box { background: var(--surface-1); border-radius: 12px; padding: 20px; max-width: 380px; width: 100%; }
   .modal-box h3 { margin: 0 0 14px; font-size: 15px; }
+
+  /* ショットの数量選び */
+  .qty-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px;
+  }
+  .qty-row.picked { background: var(--accent-soft); border: 1px solid var(--accent); }
+  .qty-info { display: flex; flex-direction: column; }
+  .qty-name { font-size: 13px; font-weight: 600; }
+  .qty-price { font-size: 11px; color: var(--text-muted); }
+  .qty-ctrl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .qty-ctrl button {
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 20px; line-height: 1;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .qty-ctrl button:disabled { opacity: 0.35; cursor: default; }
+  .qty-ctrl .qty-num { min-width: 26px; text-align: center; font-size: 16px; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -173,6 +191,7 @@ const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
 const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 const CHARGE_PER_PERSON = 500;
+const DISH_CATEGORIES = ["おつまみ","料理"];
 const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク","シャンパン"];
 const BOTTLE_CATEGORIES = ["ワイン","シャンパン","その他"];
 const COCKTAIL_PRICE_OPTIONS = [800,900,1000,1100,1200,1300,1400,1500];
@@ -201,7 +220,7 @@ function groupByCategory(items, categoryOrder) {
 }
 
 let fullRecord = {};
-let menu = { dishes: [], liquors: [], bottles: [] };
+let menu = { dishes: [], liquors: [], bottles: [], shots: [] };
 let slips = [];
 let nextSlipId = 1;
 let nextItemId = 1;
@@ -231,6 +250,7 @@ async function loadData() {
     const json = await res.json();
     fullRecord = json.record || {};
     menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
+    if (!menu.shots) menu.shots = [];
     slips = fullRecord.slips || [];
     const slipIds = slips.map(s => s.id || 0);
     nextSlipId = (slipIds.length ? Math.max(...slipIds) : 0) + 1;
@@ -430,11 +450,18 @@ function closeItemPicker() {
   document.getElementById("item-picker-modal").innerHTML = "";
 }
 function pickerSetTab(tab) { activeItemTab = tab; renderItemPicker(); }
-function stagedTotal() { return stagedItems.reduce((s,i) => s + i.price + itemExtra(i), 0); }
+function stagedTotal() { return stagedItems.reduce((s,i) => s + (i.price + itemExtra(i)) * (i.qty || 1), 0); }
+function stagedCount() { return stagedItems.reduce((s,i) => s + (i.qty || 1), 0); }
 function removeStaged(idx) { stagedItems.splice(idx, 1); renderItemPicker(); }
 function confirmStaged() {
   const slip = getCurrentSlip();
-  stagedItems.forEach(i => slip.items.push(i));
+  stagedItems.forEach(i => {
+    const n = i.qty || 1;
+    for (let k = 0; k < n; k++) {
+      const { qty, ...one } = i;
+      slip.items.push({ ...one, id: nextItemId++ });
+    }
+  });
   closeItemPicker();
   renderSlipView();
   saveData();
@@ -451,7 +478,7 @@ function renderItemPicker() {
         <div class="item-tab-row">
           <button class="${activeItemTab==='liquor' ? 'active':''}" onclick="pickerSetTab('liquor')">お酒</button>
           <button class="${activeItemTab==='bottle' ? 'active':''}" onclick="pickerSetTab('bottle')">お酒(ボトル)</button>
-          <button class="${activeItemTab==='dish' ? 'active':''}" onclick="pickerSetTab('dish')">料理・おつまみ</button>
+          <button class="${activeItemTab==='dish' ? 'active':''}" onclick="pickerSetTab('dish')">おつまみ・料理</button>
         </div>
         ${activeItemTab === 'liquor'
           ? groupByCategory(liquorItems, LIQUOR_CATEGORIES).map(g => `
@@ -467,7 +494,12 @@ function renderItemPicker() {
                 ${g.items.map(i => `<button class="item-tile" onclick='onItemTap(${JSON.stringify(i.id)}, "bottle")'><b>${escapeHtml(i.name)}</b>${yen(i.price)}</button>`).join("")}
               </div>
             `).join("")
-          : `<div class="item-grid">${dishItems.map(i => `<button class="item-tile" onclick='onItemTap(${i.id}, "dish")'><b>${escapeHtml(i.name)}</b>${yen(i.price)}</button>`).join("")}</div>`
+          : groupByCategory(dishItems, DISH_CATEGORIES).map(g => `
+              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
+              <div class="item-grid">
+                ${g.items.map(i => `<button class="item-tile" onclick='onItemTap(${i.id}, "dish")'><b>${escapeHtml(i.name)}</b>${yen(i.price)}</button>`).join("")}
+              </div>
+            `).join("")
         }
         ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'bottle' ? bottleItems.length===0 : dishItems.length===0) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
 
@@ -475,27 +507,38 @@ function renderItemPicker() {
         <div class="item-grid">
           <button class="item-tile" onclick="openCocktailModal('recommend')"><b>おすすめカクテル</b>800円〜1500円</button>
           <button class="item-tile" onclick="openCocktailModal('shake')"><b>シェイクカクテル</b>800円〜1500円</button>
+          <button class="item-tile" onclick="openSeasonalModal()"><b>季節のカクテル</b>${(menu.cocktails || []).length ? (menu.cocktails || []).length + "種類" : "未登録"}</button>
+        </div>
+
+        <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">ショット</h4>
+        <div class="item-grid">
+          <button class="item-tile" onclick="openShotModal()"><b>ショット</b>${menu.shots.length ? menu.shots.length + "種類" : "未登録"}</button>
         </div>
 
         <div class="item-grid">
           <button class="item-tile custom-tile" onclick="openCustomModal()">＋ 複雑な注文</button>
         </div>
-        <h3 style="margin-top:16px;">今回追加する項目(${stagedItems.length}点)</h3>
+        <h3 style="margin-top:16px;">今回追加する項目(${stagedCount()}点)</h3>
         ${stagedItems.length === 0 ? '<div class="empty-msg">まだ選んでいません</div>' : stagedItems.map((i, idx) => `
-          <div class="order-row">
-            <div class="o-info">
-              <span class="o-name">${escapeHtml(i.name)}</span>
-              ${i.mods && (i.mods.mixer || i.mods.style) ? `<span class="o-mods">${[i.mods.mixer ? '割材+'+i.mods.mixer : '', i.mods.style || ''].filter(Boolean).join(' / ')}</span>` : ''}
+          <div class="qty-row picked">
+            <div class="qty-info">
+              <span class="qty-name">${escapeHtml(i.name)}</span>
+              ${i.mods && (i.mods.mixer || i.mods.style) ? `<span class="qty-price">${[i.mods.mixer ? '割材+'+i.mods.mixer : '', i.mods.style || ''].filter(Boolean).join(' / ')}</span>` : ''}
+              <span class="qty-price">${yen(i.price + itemExtra(i))} × ${i.qty || 1} = <b>${yen((i.price + itemExtra(i)) * (i.qty || 1))}</b></span>
             </div>
-            <span class="o-price">${yen(i.price + itemExtra(i))}</span>
-            <button class="btn-danger-outline" onclick="removeStaged(${idx})">取消</button>
+            <div class="qty-ctrl">
+              <button onclick="stagedStep(${idx}, -1)">−</button>
+              <span class="qty-num">${i.qty || 1}</span>
+              <button onclick="stagedStep(${idx}, 1)">＋</button>
+              <button class="btn-danger-outline" style="width:auto; height:auto; border-radius:8px; font-size:12px; padding:6px 10px;" onclick="removeStaged(${idx})">取消</button>
+            </div>
           </div>
         `).join("")}
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:10px;">
           <b>小計 ${yen(stagedTotal())}</b>
           <div style="display:flex; gap:10px;">
             <button class="btn-ghost" onclick="closeItemPicker()">キャンセル</button>
-            <button class="btn-primary" ${stagedItems.length===0 ? 'disabled' : ''} onclick="confirmStaged()">伝票に追加(${stagedItems.length}点)</button>
+            <button class="btn-primary" ${stagedItems.length===0 ? 'disabled' : ''} onclick="confirmStaged()">伝票に追加(${stagedCount()}点)</button>
           </div>
         </div>
       </div>
@@ -604,6 +647,25 @@ function onItemTap(id, cat) {
   openModifierModal(id);
 }
 
+// ---- 個数(qty)つきで一時リストに入れる。同じ品目・同じ飲み方ならまとめる ----
+function stagedKey(i) {
+  return [i.name, i.cat, i.price, JSON.stringify(i.mods || null), i.custom ? 1 : 0].join("|");
+}
+function addStaged(entry, qty) {
+  const n = Math.max(1, qty || 1);
+  const key = stagedKey(entry);
+  const hit = stagedItems.find(x => stagedKey(x) === key);
+  if (hit) { hit.qty = (hit.qty || 1) + n; return; }
+  stagedItems.push({ ...entry, qty: n });
+}
+function stagedStep(idx, delta) {
+  const it = stagedItems[idx];
+  if (!it) return;
+  const next = (it.qty || 1) + delta;
+  if (next <= 0) { stagedItems.splice(idx, 1); } else { it.qty = Math.min(99, next); }
+  renderItemPicker();
+}
+
 function stageOrderItem(id, cat, mods) {
   let source;
   if (cat === "dish") { source = menu.dishes.find(x => x.id === id); }
@@ -611,7 +673,7 @@ function stageOrderItem(id, cat, mods) {
   else { source = menu.liquors.find(x => x.id === id); }
   if (!source) return;
   const price = cat === "liquor" ? source.sellPrice : source.price;
-  stagedItems.push({ id: nextItemId++, name: source.name, cat, price, mods: mods || null, cancelled: false, orderedAt: new Date().toISOString() });
+  addStaged({ id: nextItemId++, name: source.name, cat, price, mods: mods || null, cancelled: false, orderedAt: new Date().toISOString() }, 1);
   renderItemPicker();
 }
 
@@ -660,6 +722,94 @@ function confirmAddLiquor(liquorId) {
 }
 
 // ---- おすすめカクテル・シェイクカクテル(800円〜1500円を選択) ----
+// ---- ショット / 季節のカクテル(割材なし・数量をプラス/マイナスで指定) ----
+// kind: "shot" = menu.shots, "seasonal" = menu.cocktails(値段確認アプリの「季節のカクテル」)
+const QTY_PICKERS = {
+  shot:     { label: "ショット",      list: () => menu.shots || [],     cat: "shot",  empty: "値段確認アプリの「ショット」タブでまだ登録がありません" },
+  seasonal: { label: "季節のカクテル", list: () => menu.cocktails || [], cat: "dish",  empty: "値段確認アプリの「季節のカクテル」タブでまだ登録がありません" }
+};
+let qtyPickKind = "shot";
+let qtyPickQty = {};
+
+function qtyPickList() {
+  // 値段の安い順 → 同じ値段なら五十音順
+  return QTY_PICKERS[qtyPickKind].list().slice().sort((a, b) => {
+    const d = (a.price || 0) - (b.price || 0);
+    if (d !== 0) return d;
+    return JA_COLLATOR.compare(a.name || "", b.name || "");
+  });
+}
+function qtyPickCount() { return Object.values(qtyPickQty).reduce((s, n) => s + n, 0); }
+function qtyPickYen() { return qtyPickList().reduce((s, it) => s + (qtyPickQty[it.id] || 0) * it.price, 0); }
+
+function openShotModal() { openQtyPicker("shot"); }
+function openSeasonalModal() { openQtyPicker("seasonal"); }
+function openQtyPicker(kind) {
+  qtyPickKind = kind;
+  qtyPickQty = {};
+  renderQtyPicker();
+}
+function qtyPickStep(id, delta) {
+  const cur = qtyPickQty[id] || 0;
+  const next = Math.max(0, Math.min(99, cur + delta));
+  if (next === 0) { delete qtyPickQty[id]; } else { qtyPickQty[id] = next; }
+  renderQtyPicker();
+}
+function renderQtyPicker() {
+  const conf = QTY_PICKERS[qtyPickKind];
+  const list = qtyPickList();
+  const modal = document.getElementById("modifier-modal");
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeModifierModal(event)">
+      <div class="modal-box" onclick="event.stopPropagation()" style="max-width:520px; max-height:85vh; overflow-y:auto;">
+        <h3>${escapeHtml(conf.label)}(数量を選んでください)</h3>
+        ${list.length === 0
+          ? `<div class="empty-msg">${conf.empty}</div>`
+          : list.map(it => {
+              const n = qtyPickQty[it.id] || 0;
+              return `
+                <div class="qty-row ${n > 0 ? 'picked' : ''}">
+                  <div class="qty-info">
+                    <span class="qty-name">${escapeHtml(it.name)}</span>
+                    <span class="qty-price">${yen(it.price)}</span>
+                  </div>
+                  <div class="qty-ctrl">
+                    <button onclick="qtyPickStep(${it.id}, -1)" ${n === 0 ? 'disabled' : ''}>−</button>
+                    <span class="qty-num">${n}</span>
+                    <button onclick="qtyPickStep(${it.id}, 1)">＋</button>
+                  </div>
+                </div>
+              `;
+            }).join("")
+        }
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:10px;">
+          <b>小計 ${yen(qtyPickYen())}</b>
+          <div style="display:flex; gap:10px;">
+            <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
+            <button class="btn-primary" id="shot-confirm-btn" ${qtyPickCount() === 0 ? 'disabled' : ''} onclick="confirmQtyPick()">追加(${qtyPickCount()}点)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function confirmQtyPick() {
+  if (qtyPickCount() === 0) return;
+  const conf = QTY_PICKERS[qtyPickKind];
+  qtyPickList().forEach(it => {
+    const n = qtyPickQty[it.id] || 0;
+    if (n > 0) {
+      addStaged({
+        id: nextItemId++, name: it.name, cat: conf.cat, price: it.price,
+        mods: null, cancelled: false, orderedAt: new Date().toISOString()
+      }, n);
+    }
+  });
+  qtyPickQty = {};
+  closeModifierModal();
+  renderItemPicker();
+}
+
 function openCocktailModal(kind) {
   const label = kind === 'recommend' ? 'おすすめカクテル' : 'シェイクカクテル';
   modalState = { cocktailPrice: null };
@@ -688,7 +838,7 @@ function pickCocktailPrice(p) {
 }
 function confirmCocktail(label) {
   if (!modalState.cocktailPrice) return;
-  stagedItems.push({ id: nextItemId++, name: label, cat: "dish", price: modalState.cocktailPrice, mods: null, cancelled: false, orderedAt: new Date().toISOString() });
+  addStaged({ id: nextItemId++, name: label, cat: "dish", price: modalState.cocktailPrice, mods: null, cancelled: false, orderedAt: new Date().toISOString() }, 1);
   closeModifierModal();
   renderItemPicker();
 }
@@ -698,7 +848,7 @@ let customMixerExtra = 0; // 割材の追加金額(0 / 100 / 200)
 let customMixerOpen = false;
 
 function openCustomModal() {
-  const catLabel = activeItemTab === 'liquor' ? 'お酒' : '料理・おつまみ';
+  const catLabel = activeItemTab === 'liquor' ? 'お酒' : 'おつまみ・料理';
   customMixerExtra = 0;
   customMixerOpen = false;
   const modal = document.getElementById("modifier-modal");
@@ -743,7 +893,7 @@ function confirmCustomOrder() {
   if (!desc || !basePrice) { return; }
   const price = basePrice + (customMixerExtra || 0);
   const name = customMixerExtra ? `${desc}(割材+${customMixerExtra}円)` : desc;
-  stagedItems.push({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() });
+  addStaged({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() }, 1);
   closeModifierModal();
   renderItemPicker();
 }

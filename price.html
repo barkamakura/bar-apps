@@ -83,30 +83,35 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
 
   <div class="tab-row">
-    <button id="tab-dish" class="active">料理</button>
+    <button id="tab-dish" class="active">おつまみ・料理</button>
     <button id="tab-liquor">お酒</button>
     <button id="tab-bottle">お酒(ボトル)</button>
-    <button id="tab-cocktail">おすすめカクテル</button>
+    <button id="tab-cocktail">季節のカクテル</button>
+    <button id="tab-shot">ショット</button>
   </div>
 
   <!-- 料理 -->
   <div id="view-dish">
     <div class="panel">
-      <h2>料理を追加</h2>
+      <h2>おつまみ・料理を追加</h2>
       <div class="form-grid">
         <div><label>品目名</label><input type="text" id="dish-name" placeholder="例: 白身魚フライ"></div>
+        <div>
+          <label>ジャンル(必須)</label>
+          <select id="dish-category"><option value="">選択してください</option></select>
+        </div>
         <div><label>値段(円)</label><input type="number" id="dish-price" placeholder="例: 500"></div>
         <div><button class="btn-primary" id="dish-add" style="width:100%">追加</button></div>
       </div>
     </div>
-    <table id="dish-table"><thead><tr><th>品目名</th><th>値段</th><th></th></tr></thead><tbody></tbody></table>
+    <div id="dish-groups"></div>
   </div>
 
   <!-- おすすめカクテル -->
   <div id="view-cocktail" style="display:none">
     <div class="panel">
-      <h2>おすすめカクテルを追加</h2>
-      <p class="subtitle" style="margin:0 0 10px">伝票アプリの「おすすめカクテル/シェイクカクテル」欄は800円〜1500円から金額を選ぶ形式のため、こちらは値段確認用の参考リストです。</p>
+      <h2>季節のカクテルを追加</h2>
+      <p class="subtitle" style="margin:0 0 10px">名前と値段をこちらで決めて登録します。伝票アプリの「季節のカクテル」欄にそのまま並びます。<br>※「おすすめカクテル」「シェイクカクテル」はその場でスタッフが金額を決める形式なので、ここでの登録は不要です。</p>
       <div class="form-grid">
         <div><label>カクテル名</label><input type="text" id="cocktail-name" placeholder="例: モヒート"></div>
         <div><label>値段(円)</label><input type="number" id="cocktail-price" placeholder="例: 1000"></div>
@@ -114,6 +119,20 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
       </div>
     </div>
     <table id="cocktail-table"><thead><tr><th>カクテル名</th><th>値段</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- ショット -->
+  <div id="view-shot" style="display:none">
+    <div class="panel">
+      <h2>ショットを追加</h2>
+      <p class="subtitle" style="margin:0 0 10px">値段はこちらで自由に設定します。伝票アプリの「ショット」欄にそのまま並びます(割材の選択はありません)。</p>
+      <div class="form-grid">
+        <div><label>ショット名</label><input type="text" id="shot-name" placeholder="例: テキーラ"></div>
+        <div><label>値段(円)</label><input type="number" id="shot-price" placeholder="例: 800"></div>
+        <div><button class="btn-primary" id="shot-add" style="width:100%">追加</button></div>
+      </div>
+    </div>
+    <table id="shot-table"><thead><tr><th>ショット名</th><th>値段</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 
   <!-- お酒 -->
@@ -184,16 +203,19 @@ const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
 const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
 let fullRecord = {};
-let menu = { dishes: [], liquors: [], bottles: [], cocktails: [] };
+let menu = { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
 let nextId = 1;
 let loaded = false;
 
 const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク"];
 const BOTTLE_CATEGORIES = ["ワイン","シャンパン","その他"];
+const DISH_CATEGORIES = ["おつまみ","料理"];
 
 function populateCategorySelects() {
   const liqSel = document.getElementById("liq-category");
   LIQUOR_CATEGORIES.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; liqSel.appendChild(o); });
+  const dishSel = document.getElementById("dish-category");
+  DISH_CATEGORIES.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; dishSel.appendChild(o); });
   const botSel = document.getElementById("bottle-category");
   BOTTLE_CATEGORIES.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; botSel.appendChild(o); });
 }
@@ -233,9 +255,10 @@ async function loadData() {
     if (!res.ok) throw new Error("load failed");
     const json = await res.json();
     fullRecord = json.record || {};
-    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [] };
+    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
     if (!menu.cocktails) menu.cocktails = [];
-    const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails].map(i => i.id || 0);
+    if (!menu.shots) menu.shots = [];
+    const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails, ...menu.shots].map(i => i.id || 0);
     nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
     loaded = true;
     setSync("", "同期済み(全員で共有中)");
@@ -284,8 +307,8 @@ function escapeHtml(s) {
 function yen(n) { return "¥" + Math.round(n).toLocaleString(); }
 
 // ---- tab switching ----
-const tabs = { dish: "tab-dish", liquor: "tab-liquor", bottle: "tab-bottle", cocktail: "tab-cocktail" };
-const views = { dish: "view-dish", liquor: "view-liquor", bottle: "view-bottle", cocktail: "view-cocktail" };
+const tabs = { dish: "tab-dish", liquor: "tab-liquor", bottle: "tab-bottle", cocktail: "tab-cocktail", shot: "tab-shot" };
+const views = { dish: "view-dish", liquor: "view-liquor", bottle: "view-bottle", cocktail: "view-cocktail", shot: "view-shot" };
 Object.keys(tabs).forEach(key => {
   document.getElementById(tabs[key]).addEventListener("click", () => switchTab(key));
 });
@@ -299,10 +322,12 @@ function switchTab(active) {
 // ---- 料理 ----
 document.getElementById("dish-add").addEventListener("click", () => {
   const name = document.getElementById("dish-name").value.trim();
+  const category = document.getElementById("dish-category").value;
   const price = parseFloat(document.getElementById("dish-price").value);
-  if (!name || !price) { return; }
-  menu.dishes.push({ id: nextId++, name, price });
+  if (!name || !category || !price) { alert("品目名・ジャンル・値段はすべて入力してください"); return; }
+  menu.dishes.push({ id: nextId++, name, category, price });
   document.getElementById("dish-name").value = "";
+  document.getElementById("dish-category").value = "";
   document.getElementById("dish-price").value = "";
   renderAll();
   saveData();
@@ -316,6 +341,18 @@ document.getElementById("cocktail-add").addEventListener("click", () => {
   menu.cocktails.push({ id: nextId++, name, price });
   document.getElementById("cocktail-name").value = "";
   document.getElementById("cocktail-price").value = "";
+  renderAll();
+  saveData();
+});
+
+// ---- ショット(値段はこちらで自由に設定) ----
+document.getElementById("shot-add").addEventListener("click", () => {
+  const name = document.getElementById("shot-name").value.trim();
+  const price = parseFloat(document.getElementById("shot-price").value);
+  if (!name || !price) { return; }
+  menu.shots.push({ id: nextId++, name, price });
+  document.getElementById("shot-name").value = "";
+  document.getElementById("shot-price").value = "";
   renderAll();
   saveData();
 });
@@ -455,28 +492,74 @@ function renderAll() {
   renderLiquor();
   renderBottle();
   renderCocktail();
+  renderShot();
 }
 function renderDish() {
-  const tbody = document.querySelector("#dish-table tbody");
-  if (!loaded) { tbody.innerHTML = ""; return; }
-  if (menu.dishes.length === 0) { tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">まだ登録がありません</td></tr>`; return; }
-  tbody.innerHTML = menu.dishes.map(d => `
-    <tr>
-      <td class="item-name">${escapeHtml(d.name)}</td>
-      <td>${yen(d.price)}</td>
-      <td><button class="btn-del" onclick="deleteItem('dishes', ${d.id})">削除</button></td>
-    </tr>
+  const wrap = document.getElementById("dish-groups");
+  if (!loaded) { wrap.innerHTML = ""; return; }
+  if (menu.dishes.length === 0) { wrap.innerHTML = `<div class="empty-msg">まだ登録がありません</div>`; return; }
+  const groups = groupByCategory(menu.dishes, DISH_CATEGORIES, "price");
+  wrap.innerHTML = groups.map(g => `
+    <h3 style="font-size:13px; margin:16px 0 6px;">${escapeHtml(g.category)}</h3>
+    ${g.category === "未分類" ? '<p class="subtitle" style="margin:0 0 6px; font-size:12px;">※ジャンルを設定する前に登録した品目です。右のメニューから選ぶと分類できます。</p>' : ''}
+    <table><thead><tr><th>品目名</th><th>値段</th><th>ジャンル</th><th></th></tr></thead><tbody>
+      ${g.items.map(d => `
+        <tr>
+          <td class="item-name">${escapeHtml(d.name)}</td>
+          <td>${yen(d.price)}</td>
+          <td>
+            <select onchange="setDishCategory(${d.id}, this.value)">
+              ${["", ...DISH_CATEGORIES].map(c => `<option value="${c}" ${(d.category || "") === c ? "selected" : ""}>${c || "未分類"}</option>`).join("")}
+            </select>
+          </td>
+          <td><button class="btn-del" onclick="deleteItem('dishes', ${d.id})">削除</button></td>
+        </tr>
+      `).join("")}
+    </tbody></table>
   `).join("");
+}
+
+// 登録済みの品目のジャンルを後から変える
+function setDishCategory(id, category) {
+  const d = menu.dishes.find(x => x.id === id);
+  if (!d) return;
+  if (category) { d.category = category; } else { delete d.category; }
+  renderAll();
+  saveData();
 }
 function renderCocktail() {
   const tbody = document.querySelector("#cocktail-table tbody");
   if (!loaded) { tbody.innerHTML = ""; return; }
   if (menu.cocktails.length === 0) { tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">まだ登録がありません</td></tr>`; return; }
-  tbody.innerHTML = menu.cocktails.map(c => `
+  const rows = menu.cocktails.slice().sort((a, b) => {
+    const d = (a.price || 0) - (b.price || 0);
+    if (d !== 0) return d;
+    return JA_COLLATOR.compare(a.name || "", b.name || "");
+  });
+  tbody.innerHTML = rows.map(c => `
     <tr>
       <td class="item-name">${escapeHtml(c.name)}</td>
       <td>${yen(c.price)}</td>
       <td><button class="btn-del" onclick="deleteItem('cocktails', ${c.id})">削除</button></td>
+    </tr>
+  `).join("");
+}
+
+function renderShot() {
+  const tbody = document.querySelector("#shot-table tbody");
+  if (!loaded) { tbody.innerHTML = ""; return; }
+  if (menu.shots.length === 0) { tbody.innerHTML = `<tr><td colspan="3" class="empty-msg">まだ登録がありません</td></tr>`; return; }
+  // 値段の安い順 → 同じ値段なら五十音順
+  const rows = menu.shots.slice().sort((a, b) => {
+    const d = (a.price || 0) - (b.price || 0);
+    if (d !== 0) return d;
+    return JA_COLLATOR.compare(a.name || "", b.name || "");
+  });
+  tbody.innerHTML = rows.map(sh => `
+    <tr>
+      <td class="item-name">${escapeHtml(sh.name)}</td>
+      <td>${yen(sh.price)}</td>
+      <td><button class="btn-del" onclick="deleteItem('shots', ${sh.id})">削除</button></td>
     </tr>
   `).join("");
 }
