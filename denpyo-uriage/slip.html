@@ -50,6 +50,9 @@
     padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-primary);
   }
   .choice-btn.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  .ver-badge { display:inline-block; margin-left:10px; padding:3px 9px; border-radius:99px;
+    background: var(--surface-3, #e8e8e8); color: var(--text-muted); font-size: 12px; font-weight:700;
+    vertical-align: middle; letter-spacing:.04em; }
   #save-alert {
     background: #fdecec; border: 2px solid var(--danger); color: #8a1c1c;
     border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; font-size: 15px; line-height: 1.5;
@@ -102,6 +105,16 @@
   .item-tile b { display: block; font-size: 17px; margin-bottom: 4px; line-height: 1.3; }
 
   /* ジャンル選択(2列・大きめ) */
+  /* 飲み方の3択(2列・大きめ) */
+  .style-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 4px; }
+  .style-grid.one-col { grid-template-columns: 1fr; }
+  .style-tile {
+    text-align: center; padding: 20px 10px; font-size: 19px; font-weight: 800;
+    border-radius: 10px; line-height: 1.25;
+  }
+  .style-tile span { display: block; font-size: 14px; font-weight: 600; margin-top: 5px; opacity: .8; }
+  .style-tile.wide { grid-column: 1 / -1; }
+
   .genre-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
   .genre-tile {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
@@ -232,7 +245,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>Bar KAMAKURA 伝票</h1>
+  <h1>Bar KAMAKURA 伝票<span class="ver-badge">v34</span></h1>
   <p class="subtitle">卓を選んで新規伝票を作成、または対応中の伝票を開きます</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
   <div id="save-alert" style="display:none"></div>
@@ -428,7 +441,7 @@ async function loadData() {
   setSync("syncing", "読み込み中...");
   try {
     const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res.ok) throw new Error("load failed");
+    if (!res.ok) throw new Error("サーバー応答 " + res.status);
     const json = await res.json();
     fullRecord = json.record || {};
     menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
@@ -443,7 +456,7 @@ async function loadData() {
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
     // ⚠️ ここで loaded を立てない(空のまま保存すると伝票が消える)
-    setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+    setSync("error", "読み込みエラー(" + netWhy(e) + ")");
     if (!loaded) setSaveAlert("⚠️ <b>お店のデータを読み込めませんでした。</b> 電波・Wi-Fiを確認して「🔄 更新」を押してください。読み込めるまで伝票を作らないでください。");
   }
   renderTableGrid();
@@ -457,6 +470,15 @@ let saving = false;
 let saveQueued = false;
 let saveTimer = null;
 let saveFails = 0;
+
+function netWhy(e) {
+  if (navigator.onLine === false) return "端末がオフラインです";
+  const m = String((e && e.message) || e || "");
+  if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
+  if (m.includes("429")) return "通信回数の上限です。しばらく待ってください";
+  if (m.includes("401") || m.includes("403")) return "データの鍵が合いません";
+  return m || "原因不明";
+}
 
 function setSaveAlert(msg) {
   const el = document.getElementById("save-alert");
@@ -479,7 +501,7 @@ async function saveData() {
   setSync("syncing", "保存中...");
   try {
     const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("reload failed");
+    if (!res0.ok) throw new Error("読み直し失敗 " + res0.status);
     fullRecord = (await res0.json()).record || {};
     const deletedIds = new Set((fullRecord.deletedSlips || []).map(x => x.id));
     slips = mergeSlips(fullRecord.slips || [], slips, deletedIds);
@@ -490,7 +512,7 @@ async function saveData() {
       headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
       body: JSON.stringify(fullRecord)
     });
-    if (!res.ok) throw new Error("save failed");
+    if (!res.ok) throw new Error("書き込み失敗 " + res.status);
     saveFails = 0;
     lastSyncAt = Date.now();
     setSaveAlert("");
@@ -500,8 +522,8 @@ async function saveData() {
   } catch (e) {
     saveFails++;
     const wait = Math.min(30, 3 * saveFails);     // 3秒 → 6秒 → ... 最大30秒
-    setSync("error", "保存エラー、通信状況を確認してください");
-    setSaveAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗）。${wait}秒後に自動で再試行します。この画面を閉じないでください。`);
+    setSync("error", "保存エラー(" + netWhy(e) + ")");
+    setSaveAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗・${netWhy(e)}）。${wait}秒後に自動で再試行します。この画面を閉じないでください。`);
     saveTimer = setTimeout(() => { saveTimer = null; saveData(); }, wait * 1000);
   } finally {
     saving = false;
@@ -1570,12 +1592,12 @@ function stageOrderItem(id, cat, mods) {
   renderItemPicker();
 }
 
+// v34: 3択だけにした。水割り/ロック/ストレートは1つにまとめ、
+// 割材を選んだあとに「どの割材か」を聞くのもやめた(現場で手数が多すぎたため)
 const DRINK_STYLE_OPTIONS = [
-  { key: "mizuwari", label: "水割り", mixer: 0, style: "水割り" },
-  { key: "rock", label: "ロック", mixer: 0, style: "ロック" },
-  { key: "straight", label: "ストレート", mixer: 0, style: "ストレート" },
-  { key: "mix100", label: "割材(+100)", mixer: 100, style: null },
-  { key: "mix200", label: "割材(+200)", mixer: 200, style: null }
+  { key: "plain",  label: "水割り・ロック等", sub: "＋¥0",   mixer: 0,   style: null, wide: true },
+  { key: "mix100", label: "割材",             sub: "＋¥100", mixer: 100, style: null },
+  { key: "mix200", label: "割材",             sub: "＋¥200", mixer: 200, style: null }
 ];
 let modalState = { choiceKey: null, mixerName: null };
 // 飲み放題のときは「＋200円の割材」は選べない
@@ -1585,15 +1607,9 @@ function drinkStyleOptions() {
     : DRINK_STYLE_OPTIONS;
 }
 
-// 割材はソフトドリンクと同じもの。+100円 → 600円のソフトドリンク、+200円 → 800円のソフトドリンク
+// v34で「どの割材か」を聞くのをやめたので、この2つは今は使っていない。
+// また中身を選ばせたくなったときのために残してある。
 const MIXER_PRICE_BY_EXTRA = { 100: 600, 200: 800 };
-function mixerOptions(extra) {
-  const price = MIXER_PRICE_BY_EXTRA[extra];
-  return (menu.liquors || [])
-    .filter(l => l.category === "ソフトドリンク" && (l.sellPrice || 0) === price)
-    .slice()
-    .sort((a, b) => JA_COLLATOR.compare(a.name || "", b.name || ""));
-}
 // 値段(600/800円)から割材の追加料金(+100/+200)を逆引き
 const MIXER_EXTRA_BY_PRICE = { 600: 100, 800: 200 };
 // 割材だけを注文する用の一覧(ボトルを入れたお客様向け)。+100 → +200 の順、同額なら五十音順
@@ -1630,12 +1646,11 @@ function openModifierModal(liquorId) {
     <div class="modal-backdrop" onclick="closeModifierModal(event)">
       <div class="modal-box" onclick="event.stopPropagation()">
         <h3>${escapeHtml(liquor.name)} の飲み方(必須・いずれか1つ)${pickerMode === "nomi" ? '<span class="nomi-tag">飲み放題 0円</span>' : ''}</h3>
-        <div class="choice-row" id="style-choice-row">
-          ${drinkStyleOptions().map(o => `<div class="choice-btn" id="style-opt-${o.key}" onclick="pickDrinkStyle('${o.key}')">${pickerMode === "nomi" && o.mixer ? "割材" : o.label}</div>`).join("")}
-        </div>
-        <div id="mixer-wrap" style="display:none; margin-top:6px;">
-          <label>割材を選んでください(必須)</label>
-          <div class="choice-row" id="mixer-choice-row"></div>
+        <div class="style-grid ${drinkStyleOptions().length <= 2 ? 'one-col' : ''}" id="style-choice-row">
+          ${drinkStyleOptions().map(o => `
+            <div class="choice-btn style-tile ${o.wide ? 'wide' : ''}" id="style-opt-${o.key}" onclick="pickDrinkStyle('${o.key}')">
+              ${escapeHtml(o.label)}<span>${pickerMode === "nomi" ? "＋¥0" : escapeHtml(o.sub)}</span>
+            </div>`).join("")}
         </div>
         <div style="display:flex; gap:10px; margin-top:14px;">
           <button class="btn-ghost" onclick="closeModifierModal()">キャンセル</button>
@@ -1652,39 +1667,9 @@ function pickDrinkStyle(key) {
     const el = document.getElementById(`style-opt-${o.key}`);
     if (el) el.classList.toggle("selected", o.key === key);
   });
-  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === key);
-  const wrap = document.getElementById("mixer-wrap");
-  const row = document.getElementById("mixer-choice-row");
+  // v34: 選んだ時点で追加できる(割材の中身は聞かない)
   const btn = document.getElementById("liquor-confirm-btn");
-  if (opt && opt.mixer) {
-    const list = mixerOptions(opt.mixer);
-    wrap.style.display = "";
-    if (list.length === 0) {
-      row.innerHTML = `<div class="empty-msg" style="padding:6px 0;">値段確認アプリに${MIXER_PRICE_BY_EXTRA[opt.mixer]}円のソフトドリンクが登録されていません</div>`;
-      btn.disabled = false; // 登録がないときは割材の指定なしで追加できる
-    } else {
-      row.innerHTML = list.map(m => `<div class="choice-btn" id="mixer-opt-${m.id}" onclick="pickMixer(${m.id})">${escapeHtml(m.name)}</div>`).join("");
-      btn.disabled = true;  // 割材を選ぶまでは押せない
-    }
-  } else {
-    wrap.style.display = "none";
-    row.innerHTML = "";
-    btn.disabled = false;
-  }
-}
-
-function pickMixer(id) {
-  const opt = DRINK_STYLE_OPTIONS.find(o => o.key === modalState.choiceKey);
-  if (!opt) return;
-  const list = mixerOptions(opt.mixer);
-  const picked = list.find(m => m.id === id);
-  if (!picked) return;
-  modalState.mixerName = picked.name;
-  list.forEach(m => {
-    const el = document.getElementById(`mixer-opt-${m.id}`);
-    if (el) el.classList.toggle("selected", m.id === id);
-  });
-  document.getElementById("liquor-confirm-btn").disabled = false;
+  if (btn) btn.disabled = false;
 }
 function closeModifierModal(e) {
   document.getElementById("modifier-modal").innerHTML = "";

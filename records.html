@@ -71,6 +71,9 @@
   .modal-box h3 { margin: 0 0 4px; font-size: 17px; }
   .modal-meta { font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.8; }
   .modal-meta b { color: var(--text-primary); }
+  .ver-badge { display:inline-block; margin-left:10px; padding:3px 9px; border-radius:99px;
+    background: var(--surface-3, #e8e8e8); color: var(--text-muted); font-size: 12px; font-weight:700;
+    vertical-align: middle; letter-spacing:.04em; }
   .detail-row {
     display: flex; align-items: center; justify-content: space-between;
     background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; font-size: 13px;
@@ -90,7 +93,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>売上記録（Bar KAMAKURA）</h1>
+  <h1>売上記録（Bar KAMAKURA）<span class="ver-badge">v34</span></h1>
   <p class="subtitle">お会計済の伝票を自動で記録します(半永久保存・明細つき)</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
   <div style="margin-bottom:14px; display:flex; gap:8px; flex-wrap:wrap;">
@@ -169,7 +172,7 @@ async function loadData() {
   setSync("syncing", "読み込み中...");
   try {
     const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res.ok) throw new Error("load failed");
+    if (!res.ok) throw new Error("サーバー応答 " + res.status);
     const json = await res.json();
     fullRecord = json.record || {};
     deletedSlips = fullRecord.deletedSlips || [];
@@ -195,7 +198,7 @@ async function saveData() {
   setSync("syncing", "保存中...");
   try {
     const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("reload failed");
+    if (!res0.ok) throw new Error("読み直し失敗 " + res0.status);
     fullRecord = (await res0.json()).record || {};
     const deletedIds = new Set(deletedSlips.map(x => x.id));
     const keep = (fullRecord.slips || []).filter(x => x && !deletedIds.has(x.id));
@@ -205,7 +208,7 @@ async function saveData() {
     fullRecord.slips = keep;
     fullRecord.deletedSlips = deletedSlips;
     const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
-    if (!res.ok) throw new Error("save failed");
+    if (!res.ok) throw new Error("書き込み失敗 " + res.status);
     lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {

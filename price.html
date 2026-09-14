@@ -75,7 +75,35 @@
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   th { font-size: 11px; color: var(--text-muted); font-weight: 600; }
   .item-name { font-weight: 600; }
+  .ver-badge { display:inline-block; margin-left:10px; padding:3px 9px; border-radius:99px;
+    background: var(--surface-3, #e8e8e8); color: var(--text-muted); font-size: 12px; font-weight:700;
+    vertical-align: middle; letter-spacing:.04em; }
   .empty-msg { color: var(--text-muted); font-size: 13px; padding: 20px 0; text-align: center; }
+
+  /* ---- 商品分析 ---- */
+  #analysis-panel { border: 2px solid var(--accent); }
+  #analysis-toggle {
+    width: 100%; background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 16px; font-size: 17px; font-weight: 800; cursor: pointer;
+  }
+  .an-filter { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .an-filter button {
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 15px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .an-filter button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .an-filter input { width: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 13px; }
+  .an-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .an-tile { background: var(--surface-1); border-radius: 10px; padding: 12px 14px; }
+  .an-tile .t-label { font-size: 11px; color: var(--text-muted); }
+  .an-tile .t-value { font-size: 22px; font-weight: 800; margin-top: 2px; }
+  .an-bar { height: 6px; background: var(--accent); border-radius: 3px; margin-top: 4px; min-width: 2px; }
+  .an-rank { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .an-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .an-zero { color: var(--text-muted); }
+  .an-note { font-size: 12px; color: var(--text-muted); margin: 6px 0 14px; line-height: 1.6; }
+  .an-sub { font-size: 11px; color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -85,7 +113,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>Bar KAMAKURA 値段確認</h1>
+  <h1>Bar KAMAKURA 値段確認<span class="ver-badge">v34</span></h1>
   <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率17.5%で自動計算)</p>
   <div id="load-alert" style="display:none"></div>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
@@ -202,6 +230,36 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
     </div>
     <div id="bottle-groups"></div>
   </div>
+
+  <!-- ===== 商品分析 ===== -->
+  <div class="panel" id="analysis-panel">
+    <h2>商品分析</h2>
+    <button id="analysis-toggle">📊 商品分析を確認する</button>
+    <div id="analysis-body" style="display:none; margin-top:16px;">
+
+      <div class="an-filter" id="an-period">
+        <button data-p="day">日別</button>
+        <button data-p="month" class="active">月別</button>
+        <button data-p="year">年別</button>
+        <button data-p="all">すべて</button>
+        <span id="an-period-input"></span>
+      </div>
+      <div class="an-note" id="an-range"></div>
+
+      <div class="an-tiles" id="an-tiles"></div>
+
+      <div class="an-filter" id="an-cat">
+        <button data-c="liquor" class="active">お酒</button>
+        <button data-c="bottle">お酒(ボトル)</button>
+        <button data-c="dish">おつまみ・料理</button>
+        <button data-c="shot">ショット</button>
+        <button data-c="cocktail">カクテル</button>
+      </div>
+
+      <div id="an-table"></div>
+      <div id="an-zero"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -213,6 +271,14 @@ const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 let fullRecord = {};
 let menu = { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
 let nextId = 1;
+
+// ---- 商品分析 ----
+const DAY_START_HOUR = 17;          // 17時区切りの営業日(売上記録アプリと同じ)
+let analysisSlips = [];             // お会計済みの伝票(読み込みのたびに入れ直す)
+let anPeriod = "month";             // day / month / year / all
+let anDate = null;                  // 期間の基準日(文字列)
+let anCat = "liquor";
+let anOpen = false;
 let loaded = false;
 
 const LIQUOR_CATEGORIES = ["ウイスキー(Bourbon)","ウイスキー(Japanese)","ウイスキー(Scotch その他)","ジン","ウォッカ","ラム","テキーラ","ブランデー","ベルモット","焼酎","日本酒","リキュール","ビール","ワイン","その他","ノンアルコール","ソフトドリンク","ホットドリンク"];
@@ -256,6 +322,16 @@ function setSync(state, text) {
   label.textContent = text;
 }
 
+// 何が起きたのかを日本語で返す(「同期エラー」だけでは原因が分からないため)
+function netWhy(e) {
+  if (navigator.onLine === false) return "端末がオフラインです";
+  const m = String((e && e.message) || e || "");
+  if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
+  if (m.includes("429")) return "通信回数の上限です。しばらく待ってください";
+  if (m.includes("401") || m.includes("403")) return "データの鍵が合いません";
+  return m || "原因不明";
+}
+
 function setLoadAlert(msg) {
   const el = document.getElementById("load-alert");
   if (!el) return;
@@ -268,10 +344,11 @@ async function loadData() {
   setSync("syncing", "読み込み中...");
   try {
     const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res.ok) throw new Error("load failed");
+    if (!res.ok) throw new Error("サーバー応答 " + res.status);
     const json = await res.json();
     fullRecord = json.record || {};
     menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
+    analysisSlips = (fullRecord.slips || []).filter(x => x && x.status === "paid");
     if (!menu.cocktails) menu.cocktails = [];
     if (!menu.shots) menu.shots = [];
     const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails, ...menu.shots].map(i => i.id || 0);
@@ -283,9 +360,9 @@ async function loadData() {
   } catch (e) {
     // ⚠️ ここで loaded を立てない。立てると「空っぽの一覧」を保存してしまい、
     //    登録済みの商品が全部消える(v32で対策)
-    setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+    setSync("error", "読み込みエラー(" + netWhy(e) + ")");
     setLoadAlert("⚠️ <b>お店のデータを読み込めませんでした。</b><br>"
-      + "電波・Wi-Fiを確認してください。<br>"
+      + "原因: <b>" + netWhy(e) + "</b><br>電波・Wi-Fiを確認してください。<br>"
       + "<b>読み込めるまで登録・変更はしないでください。</b>（今登録しても保存されません）");
   }
   renderAll();
@@ -342,7 +419,7 @@ async function saveData() {
   setSync("syncing", "保存中...");
   try {
     const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("reload failed");
+    if (!res0.ok) throw new Error("読み直し失敗 " + res0.status);
     fullRecord = (await res0.json()).record || {};
     menu = mergeMenu(fullRecord.menuItems, menu);
     if (!menu.cocktails) menu.cocktails = [];
@@ -353,7 +430,7 @@ async function saveData() {
       headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
       body: JSON.stringify(fullRecord)
     });
-    if (!res.ok) throw new Error("save failed");
+    if (!res.ok) throw new Error("書き込み失敗 " + res.status);
     saveFails = 0;
     setLoadAlert("");
     setSync("", "同期済み(全員で共有中)");
@@ -361,7 +438,7 @@ async function saveData() {
   } catch (e) {
     saveFails++;
     const wait = Math.min(30, 3 * saveFails);
-    setSync("error", "保存エラー、通信状況を確認してください");
+    setSync("error", "保存エラー(" + netWhy(e) + ")");
     setLoadAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗）。${wait}秒後に自動で再試行します。<br>この画面を閉じないでください。`);
     saveTimer = setTimeout(() => { saveTimer = null; saveData(); }, wait * 1000);
   } finally {
@@ -558,6 +635,7 @@ function deleteItem(category, id) {
 
 // ---- render ----
 function renderAll() {
+  if (typeof anRender === "function") anRender();   // 商品分析も一緒に更新
   renderDish();
   renderLiquor();
   renderBottle();
@@ -673,6 +751,191 @@ function renderLiquor() {
 }
 
 document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
+
+// ==================== 商品分析 ====================
+// 伝票アプリでお会計した伝票から、商品ごとの出数と売上を数える。
+// データは読み込み済みの fullRecord をそのまま使うので、通信は増えない。
+
+function anBizDay(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  if (d.getHours() < DAY_START_HOUR) d.setDate(d.getDate() - 1);
+  return d;
+}
+function anYmd(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function anYm(d)  { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+function anYen(n) { return "¥" + Math.round(n).toLocaleString(); }
+
+// 今の営業日(17時前ならまだ前日の営業)
+function anToday() { const d = anBizDay(new Date().toISOString()); return d || new Date(); }
+
+function anDefaultDate() {
+  const t = anToday();
+  if (anPeriod === "day")   return anYmd(t);
+  if (anPeriod === "month") return anYm(t);
+  if (anPeriod === "year")  return String(t.getFullYear());
+  return "";
+}
+
+// 期間に入る伝票だけ取り出す
+function anSlipsInRange() {
+  if (anPeriod === "all") return analysisSlips;
+  const key = anDate || anDefaultDate();
+  return analysisSlips.filter(sp => {
+    const d = anBizDay(sp.paidAt);
+    if (!d) return false;
+    if (anPeriod === "day")   return anYmd(d) === key;
+    if (anPeriod === "month") return anYm(d) === key;
+    if (anPeriod === "year")  return String(d.getFullYear()) === key;
+    return true;
+  });
+}
+
+// 伝票の1品の売上(割材の追加分も足す)
+function anItemPrice(i) { return (i.price || 0) + ((i.mods && i.mods.mixer) || 0); }
+
+// 区分ごとの、登録してある商品の一覧
+function anMenuList(cat) {
+  if (cat === "liquor")   return menu.liquors || [];
+  if (cat === "bottle")   return menu.bottles || [];
+  if (cat === "dish")     return menu.dishes || [];
+  if (cat === "shot")     return menu.shots || [];
+  if (cat === "cocktail") return menu.cocktails || [];
+  return [];
+}
+const AN_CAT_LABEL = { liquor:"お酒", bottle:"お酒(ボトル)", dish:"おつまみ・料理", shot:"ショット", cocktail:"カクテル" };
+
+// 集計本体
+function anBuild() {
+  const slips = anSlipsInRange();
+  const byCat = {};                      // cat -> name -> {count, sales, nomi}
+  let allCount = 0, allSales = 0;
+  slips.forEach(sp => {
+    (sp.items || []).forEach(i => {
+      if (!i || i.cancelled) return;
+      const cat = i.cat || "liquor";
+      const name = i.name || "(名前なし)";
+      if (!byCat[cat]) byCat[cat] = {};
+      if (!byCat[cat][name]) byCat[cat][name] = { count:0, sales:0, nomi:0, custom: !!i.custom };
+      const row = byCat[cat][name];
+      row.count += 1;
+      row.sales += anItemPrice(i);
+      if (i.nomi) row.nomi += 1;
+      allCount += 1;
+      allSales += anItemPrice(i);
+    });
+  });
+  return { slips, byCat, allCount, allSales };
+}
+
+function anRenderPeriodInput() {
+  const el = document.getElementById("an-period-input");
+  if (!el) return;
+  if (!anDate) anDate = anDefaultDate();
+  if (anPeriod === "day")        el.innerHTML = `<input type="date" id="an-date" value="${anDate}">`;
+  else if (anPeriod === "month") el.innerHTML = `<input type="month" id="an-date" value="${anDate}">`;
+  else if (anPeriod === "year")  el.innerHTML = `<input type="number" id="an-date" value="${anDate}" min="2020" max="2100" style="width:100px;">`;
+  else el.innerHTML = "";
+  const inp = document.getElementById("an-date");
+  if (inp) inp.addEventListener("change", e => { anDate = e.target.value; anRender(); });
+}
+
+function anRangeText() {
+  if (anPeriod === "all") return "すべての期間";
+  const key = anDate || anDefaultDate();
+  if (anPeriod === "day")   return `営業日 ${key}（その日の17:00 〜 翌日16:59）`;
+  if (anPeriod === "month") return `${key} の1か月（営業日は17時区切り）`;
+  return `${key}年（営業日は17時区切り）`;
+}
+
+function anRender() {
+  if (!anOpen) return;
+  anRenderPeriodInput();
+  document.getElementById("an-range").textContent = anRangeText();
+
+  const data = anBuild();
+  const tiles = document.getElementById("an-tiles");
+  tiles.innerHTML = `
+    <div class="an-tile"><div class="t-label">対象の伝票</div><div class="t-value">${data.slips.length}件</div></div>
+    <div class="an-tile"><div class="t-label">出た商品の数</div><div class="t-value">${data.allCount}点</div></div>
+    <div class="an-tile"><div class="t-label">商品の売上合計</div><div class="t-value">${anYen(data.allSales)}</div></div>
+  `;
+
+  const map = data.byCat[anCat] || {};
+  const rows = Object.keys(map).map(name => ({ name, ...map[name] }))
+    .sort((a,b) => (b.count - a.count) || (b.sales - a.sales) || JA_COLLATOR.compare(a.name, b.name));
+  const catTotal = rows.reduce((t,r) => t + r.count, 0);
+  const top = rows.length ? rows[0].count : 0;
+
+  const tbl = document.getElementById("an-table");
+  if (!rows.length) {
+    tbl.innerHTML = `<div class="empty-msg">この期間に「${AN_CAT_LABEL[anCat]}」の注文はありませんでした</div>`;
+  } else {
+    tbl.innerHTML = `
+      <table>
+        <thead><tr>
+          <th style="width:36px;">順位</th><th>商品名</th>
+          <th class="an-num">出数</th><th class="an-num">構成比</th><th class="an-num">売上</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r,idx) => `
+            <tr>
+              <td class="an-rank">${idx+1}</td>
+              <td>
+                <span class="item-name">${escapeHtmlAn(r.name)}</span>
+                ${r.custom ? '<span class="an-sub">（複雑な注文）</span>' : ''}
+                ${r.nomi ? `<span class="an-sub">（うち飲み放題 ${r.nomi}）</span>` : ''}
+                <div class="an-bar" style="width:${top ? Math.max(2, Math.round(r.count / top * 100)) : 2}%"></div>
+              </td>
+              <td class="an-num"><b>${r.count}</b></td>
+              <td class="an-num">${catTotal ? (r.count / catTotal * 100).toFixed(1) : "0.0"}%</td>
+              <td class="an-num">${anYen(r.sales)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+  }
+
+  // 登録してあるのに1つも出ていない商品(仕入れの見直し用)
+  const ordered = new Set(Object.keys(map));
+  const zero = anMenuList(anCat).filter(m => !ordered.has(m.name));
+  const zEl = document.getElementById("an-zero");
+  if (!anMenuList(anCat).length) { zEl.innerHTML = ""; return; }
+  zEl.innerHTML = `
+    <h2 style="font-size:13px; margin:22px 0 8px;">この期間に出ていない「${AN_CAT_LABEL[anCat]}」 ${zero.length}件</h2>
+    ${zero.length === 0
+      ? '<div class="an-note">登録してある商品はすべて出ています。</div>'
+      : `<div class="an-note">${zero.map(m => escapeHtmlAn(m.name)).join(" ・ ")}</div>`}
+  `;
+}
+
+function escapeHtmlAn(x) {
+  return String(x).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+document.getElementById("analysis-toggle").addEventListener("click", () => {
+  anOpen = !anOpen;
+  document.getElementById("analysis-body").style.display = anOpen ? "" : "none";
+  document.getElementById("analysis-toggle").textContent = anOpen ? "📊 商品分析を閉じる" : "📊 商品分析を確認する";
+  if (anOpen) anRender();
+});
+document.querySelectorAll("#an-period button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#an-period button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    anPeriod = b.dataset.p;
+    anDate = anDefaultDate();
+    anRender();
+  });
+});
+document.querySelectorAll("#an-cat button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#an-cat button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    anCat = b.dataset.c;
+    anRender();
+  });
+});
+
 loadData();
 </script>
 </body>

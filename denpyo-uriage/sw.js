@@ -3,7 +3,7 @@
 // お店のデータ(jsonbin)は必ずネット経由で取りに行くので、古いデータが表示されることはありません。
 // 画面のファイルもネット優先。オフラインのときだけ保存分を使います。
 
-const CACHE = "bk-denpyo-uriage-v32";
+const CACHE = "bk-denpyo-uriage-v34";
 const SHELL = [
   "./",
   "./index.html",
