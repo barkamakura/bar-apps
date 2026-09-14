@@ -150,6 +150,7 @@ let fullRecord = {};
 let allSlips = [];
 let deletedSlips = [];
 let loaded = false;
+let lastSyncAt = 0;
 let periodMode = "day";
 let showingTrash = false;
 
@@ -160,16 +161,21 @@ function setSync(state, text) {
   label.textContent = text;
 }
 
+let saving = false;
+
 async function loadData() {
+  if (saving) return;
   setSync("syncing", "読み込み中...");
   try {
     const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
     if (!res.ok) throw new Error("load failed");
     const json = await res.json();
     fullRecord = json.record || {};
-    allSlips = (fullRecord.slips || []).filter(s => s.status === "paid");
     deletedSlips = fullRecord.deletedSlips || [];
+    const deletedIds = new Set(deletedSlips.map(x => x.id));
+    allSlips = (fullRecord.slips || []).filter(s => s.status === "paid" && !deletedIds.has(s.id));
     loaded = true;
+    lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
     setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
@@ -178,23 +184,49 @@ async function loadData() {
   render();
 }
 
+// 保存の直前にサーバーを読み直し、他のiPadがその間にお会計した伝票を巻き込まないようにする。
+// 以前は「サーバーのお会計済みを全部捨てて、この端末が持っている分だけ書き戻す」形だったため、
+// 消去のタイミング次第で直前のお会計が消えることがあった。
 async function saveData() {
+  if (saving) return;
+  saving = true;
   setSync("syncing", "保存中...");
   try {
     const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
     if (!res0.ok) throw new Error("reload failed");
     fullRecord = (await res0.json()).record || {};
-    fullRecord.slips = [...(fullRecord.slips || []).filter(s => s.status !== "paid"), ...allSlips];
+    const deletedIds = new Set(deletedSlips.map(x => x.id));
+    const keep = (fullRecord.slips || []).filter(x => x && !deletedIds.has(x.id));
+    const known = new Set(keep.map(x => x.id));
+    // この端末にしか無いお会計済みの伝票があれば足しておく
+    allSlips.forEach(x => { if (x && !known.has(x.id) && !deletedIds.has(x.id)) keep.push(x); });
+    fullRecord.slips = keep;
     fullRecord.deletedSlips = deletedSlips;
     const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
     if (!res.ok) throw new Error("save failed");
+    lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
     setSync("error", "保存エラー、通信状況を確認してください");
+    alert("保存できませんでした。通信状況を確認して、もう一度お試しください。");
+  } finally {
+    saving = false;
   }
+  await loadData();
 }
 
 document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
+
+// ---- 自動更新 ----
+// 伝票アプリでお会計したら、こちらを触らなくても最大20秒で反映される
+function recBusy() {
+  if (saving) return true;
+  if (document.querySelector("#detail-modal .modal-backdrop")) return true;  // 明細を見ている最中
+  return false;
+}
+setInterval(() => { if (!recBusy()) loadData(); }, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !recBusy()) loadData(); });
+window.addEventListener("focus", () => { if (!recBusy() && Date.now() - lastSyncAt > 5000) loadData(); });
 
 renderPeriodInput();
 
@@ -216,7 +248,12 @@ function itemExtra(item) { let extra = 0; if (item.mods && item.mods.mixer) extr
 const NOMI_PER_PERSON = 4000;
 const NOMI_EXTEND_PER_PERSON = 2000;
 function nomiPlan(slip) { return (slip && slip.nomihodai) ? slip.nomihodai : null; }
-function chargeFor(slip) { return nomiPlan(slip) ? 0 : (slip.count || 0) * CHARGE_PER_PERSON; }
+// 出戻りの伝票はチャージなし(飲み放題も同じ)
+function chargeFor(slip) {
+  if (nomiPlan(slip)) return 0;
+  if (slip && slip.rebook) return 0;
+  return (slip.count || 0) * CHARGE_PER_PERSON;
+}
 function nomiBaseFee(slip) { const n = nomiPlan(slip); return n ? n.count * NOMI_PER_PERSON : 0; }
 function nomiExtendFee(slip) { const n = nomiPlan(slip); return n ? (n.extends || 0) * n.count * NOMI_EXTEND_PER_PERSON : 0; }
 function nomiFee(slip) { return nomiBaseFee(slip) + nomiExtendFee(slip); }
@@ -439,9 +476,9 @@ function showDetail(slipId, fromTrash) {
   modal.innerHTML = `
     <div class="modal-backdrop" onclick="event.target===event.currentTarget && closeDetail()">
       <div class="modal-box">
-        <h3>${slip.table} 卓 明細</h3>
+        <h3>${escapeHtml(slip.table)}${["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"].includes(slip.table) ? " 卓" : ""} 明細</h3>
         <div class="modal-meta">
-          <b>${escapeHtml(slip.type || "")}</b> ・ <b>${slip.count}名</b>${slip.note ? " ・ " + escapeHtml(slip.note) : ""}<br>
+          <b>${escapeHtml(slip.type || "")}</b> ・ <b>${slip.count}名</b>${slip.rebook ? " ・ <b>🔁 出戻り</b>" : ""}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}<br>
           営業日: <b>${bizDayText(slip.paidAt)}</b>(17時区切り)<br>
           伝票作成: <b>${fmtDateTime(slip.createdAt)}</b><br>
           お会計: <b>${fmtDateTime(slip.paidAt)}</b><br>
@@ -458,10 +495,15 @@ function showDetail(slipId, fromTrash) {
           <span class="d-price">${yen(nomiExtendFee(slip))}</span>
         </div>` : ''}
         ` : `
+        ${slip.rebook ? `
+        <div class="detail-row">
+          <div class="d-info"><span class="d-name">🔁 出戻り</span><span class="d-mods">チャージなし</span></div>
+          <span class="d-price">${yen(0)}</span>
+        </div>` : `
         <div class="detail-row">
           <div class="d-info"><span class="d-name">チャージ(${slip.count}名 × ¥500)</span></div>
           <span class="d-price">${yen(charge)}</span>
-        </div>`}
+        </div>`}`}
         ${(slip.items || []).map(i => {
           const mods = [];
           if (i.mods && (i.mods.mixer || i.mods.mixerName)) mods.push(i.mods.mixer ? `割材+${i.mods.mixer}${i.mods.mixerName ? `(${i.mods.mixerName})` : ""}` : `割材(${i.mods.mixerName})`);

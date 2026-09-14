@@ -50,6 +50,16 @@
     padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-primary);
   }
   .choice-btn.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  #save-alert {
+    background: #fdecec; border: 2px solid var(--danger); color: #8a1c1c;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; font-size: 15px; line-height: 1.5;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  #save-alert b { font-weight: 800; }
+  .rebook-btn { flex: none; white-space: nowrap; font-weight: 700; border-color: var(--good); color: var(--good); }
+  .rebook-btn.selected { background: var(--good); border-color: var(--good); color: #fff; }
+  .table-btn.named { background: #fdf3e2; border-color: #e8940c; color: #9a610a; }
+  .table-btn.add-named { border-style: dashed; color: var(--text-secondary); }
   .choice-btn.selected.mod { background: var(--good); border-color: var(--good); }
   label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
   input[type=text], input[type=number] {
@@ -80,15 +90,30 @@
   .total-box .amount { font-size: 26px; font-weight: 800; color: var(--accent); }
 
   .item-tab-row { display: flex; gap: 6px; margin-bottom: 12px; }
-  .item-tab-row button { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); font-weight: 500; cursor: pointer; border-radius: 8px; padding: 8px 14px; font-size: 13px; }
+  .item-tab-row button { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); font-weight: 700; cursor: pointer; border-radius: 8px; padding: 12px 10px; font-size: 15px; flex: 1; }
   .item-tab-row button.active { background: var(--accent); color: white; border-color: var(--accent); }
 
-  .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 18px; }
+  .item-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 18px; }
   .item-tile {
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px; cursor: pointer; text-align: left; font-size: 12px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 12px; cursor: pointer; text-align: left; font-size: 14px;
+    min-height: 66px; line-height: 1.35;
   }
-  .item-tile b { display: block; font-size: 13px; margin-bottom: 2px; }
+  .item-tile b { display: block; font-size: 17px; margin-bottom: 4px; line-height: 1.3; }
+
+  /* ジャンル選択(2列・大きめ) */
+  .genre-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+  .genre-tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 10px; cursor: pointer; text-align: center;
+    font-size: 18px; font-weight: 700; color: var(--text-primary); line-height: 1.3;
+  }
+  .genre-tile .g-sub { display: block; font-size: 12px; font-weight: 500; color: var(--text-muted); margin-top: 5px; }
+  .genre-tile.special { border-style: dashed; color: var(--text-secondary); }
+  .picker-crumb { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
+  .picker-crumb .now { font-size: 18px; font-weight: 800; }
+  .btn-back { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
+    cursor: pointer; font-size: 14px; font-weight: 700; border-radius: 8px; padding: 10px 16px; }
   .item-tile:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .order-row {
@@ -210,6 +235,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
   <h1>Bar KAMAKURA 伝票</h1>
   <p class="subtitle">卓を選んで新規伝票を作成、または対応中の伝票を開きます</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
+  <div id="save-alert" style="display:none"></div>
 
   <div id="view-tables">
     <div class="panel">
@@ -226,6 +252,10 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
     <div id="new-table-switch"></div>
     <div class="panel">
       <h2 id="new-slip-title">新規伝票 - </h2>
+      <div id="name-wrap" style="display:none; margin-bottom:16px;">
+        <label>名前(必須)</label>
+        <input type="text" id="name-input" placeholder="例: 山田様 / 立ち飲み1">
+      </div>
       <label>新規 or 常連(必須)</label>
       <div class="choice-row" id="type-choice">
         <div class="choice-btn" data-val="新規">新規</div>
@@ -259,7 +289,11 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
       </div>
 
       <label>任意項目</label>
-      <div style="margin-bottom:16px;"><input type="text" id="note-input" placeholder="例: 誕生日のお客様"></div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <input type="text" id="note-input" placeholder="例: 誕生日のお客様" style="flex:1;">
+        <button type="button" class="choice-btn rebook-btn" id="rebook-btn">🔁 出戻り</button>
+      </div>
+      <div class="nomi-fee-line" id="rebook-note" style="display:none; margin-bottom:16px;">出戻りのため、チャージはいただきません。</div>
       <div style="display:flex; gap:10px;">
         <button class="btn-ghost" id="new-cancel-btn">戻る</button>
         <button class="btn-primary" id="new-create-btn" disabled>この内容で伝票を作成</button>
@@ -329,10 +363,13 @@ let slips = [];
 let nextSlipId = 1;
 let nextItemId = 1;
 let loaded = false;
+let lastSyncAt = 0;      // 最後にサーバーと同期できた時刻
 
 let currentTable = null;
 let currentSlipId = null;
-let newSlipDraft = { type: null, count: null };
+let newSlipDraft = { type: null, count: null, rebook: false };
+let nameMode = false;          // 「名前で追加」で伝票を作っている最中か
+let pickerGenre = null;        // 品目追加のジャンル選択(null = ジャンル一覧)
 let activeItemTab = "liquor";
 let payUiOpen = false;
 let payDraft = { method: null, note: "" };
@@ -347,7 +384,45 @@ function setSync(state, text) {
   label.textContent = text;
 }
 
+// ---- 伝票の突き合わせ ----
+// 同じ伝票の「サーバー側」と「この端末側」を比べて、新しいほうを残す。
+// 昔は fullRecord.slips = slips で丸ごと上書きしていたため、
+// 別のiPadでお会計した直後にこの端末が保存すると、その会計が消えていた。
+// (消えた伝票をもう一度会計し直すので、売上記録の時刻がずれていた)
+function slipStamp(x) {
+  if (!x) return 0;
+  return Date.parse(x.updatedAt || x.paidAt || x.createdAt || 0) || 0;
+}
+function newerSlip(a, b) {
+  // お会計済みは絶対に「未会計」へ戻さない
+  if (a.status === "paid" && b.status !== "paid") return a;
+  if (b.status === "paid" && a.status !== "paid") return b;
+  return slipStamp(b) >= slipStamp(a) ? b : a;
+}
+function mergeSlips(serverSlips, localSlips, deletedIds) {
+  const map = new Map();
+  (serverSlips || []).forEach(x => { if (x && x.id != null && !deletedIds.has(x.id)) map.set(x.id, x); });
+  (localSlips || []).forEach(l => {
+    if (!l || l.id == null) return;
+    if (deletedIds.has(l.id)) return;            // 売上記録で消した伝票は復活させない
+    const srv = map.get(l.id);
+    map.set(l.id, srv ? newerSlip(srv, l) : l);  // srvが無い = この端末で作った伝票
+  });
+  return [...map.values()];
+}
+// 伝票を触ったら更新時刻を刻む(どちらが新しいか判断するため)
+function touchSlip(x) { if (x) x.updatedAt = new Date().toISOString(); }
+function saveSlip(x) { touchSlip(x); saveData(); }
+
+function refreshIdCounters() {
+  const slipIds = slips.map(x => x.id || 0);
+  nextSlipId = Math.max(nextSlipId, (slipIds.length ? Math.max(...slipIds) : 0) + 1);
+  const itemIds = slips.flatMap(x => (x.items||[]).map(i => i.id || 0));
+  nextItemId = Math.max(nextItemId, (itemIds.length ? Math.max(...itemIds) : 0) + 1);
+}
+
 async function loadData() {
+  if (saving) return;                  // 保存中に読み込むと書きかけが消えるので待つ
   setSync("syncing", "読み込み中...");
   try {
     const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
@@ -356,12 +431,13 @@ async function loadData() {
     fullRecord = json.record || {};
     menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
     if (!menu.shots) menu.shots = [];
-    slips = fullRecord.slips || [];
-    const slipIds = slips.map(s => s.id || 0);
-    nextSlipId = (slipIds.length ? Math.max(...slipIds) : 0) + 1;
-    const itemIds = slips.flatMap(s => (s.items||[]).map(i => i.id || 0));
-    nextItemId = (itemIds.length ? Math.max(...itemIds) : 0) + 1;
+    const deletedIds = new Set((fullRecord.deletedSlips || []).map(x => x.id));
+    // 読み込みでも突き合わせる。保存できていない手元の変更を消さないため
+    slips = loaded ? mergeSlips(fullRecord.slips || [], slips, deletedIds)
+                   : (fullRecord.slips || []);
+    refreshIdCounters();
     loaded = true;
+    lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
     setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
@@ -370,18 +446,56 @@ async function loadData() {
   if (currentSlipId) renderSlipView();
 }
 
+// ---- 保存 ----
+// 失敗したら黙って終わらせず、画面に出したうえで自動で再試行する。
+// お会計が保存されないまま閉店するのが一番こわいため。
+let saving = false;
+let saveQueued = false;
+let saveTimer = null;
+let saveFails = 0;
+
+function setSaveAlert(msg) {
+  const el = document.getElementById("save-alert");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  el.innerHTML = `<span>${msg}</span><button class="btn-ghost" onclick="saveData()">今すぐ再試行</button>`;
+}
+
 async function saveData() {
+  if (saving) { saveQueued = true; return; }      // 二重送信を防ぐ
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  saving = true;
   setSync("syncing", "保存中...");
   try {
     const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
     if (!res0.ok) throw new Error("reload failed");
     fullRecord = (await res0.json()).record || {};
+    const deletedIds = new Set((fullRecord.deletedSlips || []).map(x => x.id));
+    slips = mergeSlips(fullRecord.slips || [], slips, deletedIds);
+    refreshIdCounters();
     fullRecord.slips = slips;
-    const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
+    const res = await fetch(BASE_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
+      body: JSON.stringify(fullRecord)
+    });
     if (!res.ok) throw new Error("save failed");
+    saveFails = 0;
+    lastSyncAt = Date.now();
+    setSaveAlert("");
     setSync("", "同期済み(全員で共有中)");
+    renderTableGrid();
+    if (currentSlipId) renderSlipView();
   } catch (e) {
+    saveFails++;
+    const wait = Math.min(30, 3 * saveFails);     // 3秒 → 6秒 → ... 最大30秒
     setSync("error", "保存エラー、通信状況を確認してください");
+    setSaveAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗）。${wait}秒後に自動で再試行します。この画面を閉じないでください。`);
+    saveTimer = setTimeout(() => { saveTimer = null; saveData(); }, wait * 1000);
+  } finally {
+    saving = false;
+    if (saveQueued) { saveQueued = false; saveData(); }
   }
 }
 
@@ -390,6 +504,15 @@ function yen(n) { return "¥" + Math.round(n).toLocaleString(); }
 
 function openSlipFor(table) {
   return slips.find(s => s.table === table && s.status === "open");
+}
+
+// 卓名(C1〜T4)ではない、名前で作った対応中の伝票
+function namedOpenSlips() {
+  return slips.filter(s => s.status === "open" && !TABLES.includes(s.table));
+}
+// 卓一覧・他の卓ボタンに出す並び(固定の卓 → 名前の伝票)
+function allTableNames() {
+  return TABLES.concat(namedOpenSlips().map(s => s.table));
 }
 
 // ---- 画面切り替え ----
@@ -417,7 +540,7 @@ function serveItem(slipId, itemId) {
   renderPendingList();
   renderTableGrid();
   if (currentSlipId) renderSlipView();
-  saveData();
+  saveSlip(slip);
 }
 
 function unserveItem(slipId, itemId) {
@@ -430,7 +553,7 @@ function unserveItem(slipId, itemId) {
   renderPendingList();
   renderTableGrid();
   if (currentSlipId) renderSlipView();
-  saveData();
+  saveSlip(slip);
 }
 
 function pendingOrders() {
@@ -489,8 +612,9 @@ function renderPendingList() {
 function renderTableGrid() {
   renderPendingList();
   const grid = document.getElementById("table-grid");
-  grid.innerHTML = TABLES.map(t => {
+  const tile = (t, named) => {
     const slip = openSlipFor(t);
+    const go = `selectTable(${JSON.stringify(t).replace(/"/g, "&quot;")})`;
     if (slip) {
       const total = calcTotal(slip);
       const pend = (slip.items || []).filter(isPending).length;
@@ -498,23 +622,27 @@ function renderTableGrid() {
       const nomiMark = nomiPlan(slip)
         ? `<span class="nomi-mark">🍻飲み放題${nt ? (nt.remainMin > 0 ? ` 残${fmtMin(nt.remainMin)}` : " 時間超過") : " 未スタート"}</span><br>`
         : '';
-      return `<div class="table-btn occupied" onclick="selectTable('${t}')">${t}<span class="t-sub">${nomiMark}対応中 ${yen(total)}${pend ? ` ・未提供${pend}` : ''}</span></div>`;
+      const reb = slip.rebook ? '🔁 ' : '';
+      return `<div class="table-btn occupied ${named ? 'named' : ''}" onclick="${go}">${escapeHtml(t)}<span class="t-sub">${nomiMark}${reb}対応中 ${yen(total)}${pend ? ` ・未提供${pend}` : ''}</span></div>`;
     }
-    return `<div class="table-btn" onclick="selectTable('${t}')">${t}<span class="t-sub">空席</span></div>`;
-  }).join("");
+    return `<div class="table-btn" onclick="${go}">${escapeHtml(t)}<span class="t-sub">空席</span></div>`;
+  };
+  grid.innerHTML = TABLES.map(t => tile(t, false)).join("")
+    + namedOpenSlips().map(s => tile(s.table, true)).join("")
+    + `<div class="table-btn add-named" onclick="startNamedSlip()">＋ 名前で追加<span class="t-sub">卓名を入力</span></div>`;
 }
 
 // ---- 他の卓へ移るボタン(今いる卓は出さない) ----
 // 対応中の卓は色を変え、未提供の件数をバッジで出す
 function renderTableSwitch(currentName) {
-  const others = TABLES.filter(t => t !== currentName);
+  const others = allTableNames().filter(t => t !== currentName);
   return `
     <div class="table-switch">
       <span class="tsw-label">他の卓へ</span>
       ${others.map(t => {
         const os = openSlipFor(t);
         const pend = os ? (os.items || []).filter(isPending).length : 0;
-        return `<button class="tsw-btn ${os ? 'occupied' : ''}" onclick="selectTable('${t}')">${t}
+        return `<button class="tsw-btn ${os ? 'occupied' : ''}" onclick="selectTable(${JSON.stringify(t).replace(/"/g, "&quot;")})">${escapeHtml(t)}
           <span class="tsw-sub">${os ? yen(calcTotal(os)) : '空席'}</span>
           ${pend ? `<span class="tsw-badge">${pend}</span>` : ''}
         </button>`;
@@ -538,17 +666,47 @@ function selectTable(table) {
     showView("slip");
     renderSlipView();
   } else {
-    newSlipDraft = { type: null, count: null, plan: null, planPicked: false };
-    document.getElementById("new-slip-title").textContent = "新規伝票 - " + table;
-    document.querySelectorAll("#type-choice .choice-btn").forEach(b => b.classList.remove("selected"));
-    document.querySelectorAll("#count-choice .choice-btn").forEach(b => b.classList.remove("selected"));
-    document.getElementById("count-input-wrap").style.display = "none";
-    document.getElementById("count-input").value = "";
-    document.getElementById("note-input").value = "";
+    nameMode = false;
+    resetNewSlipForm("新規伝票 - " + table);
+    document.getElementById("name-wrap").style.display = "none";
     document.getElementById("new-table-switch").innerHTML = renderTableSwitch(table);
-    refreshPlanChoice();
     showView("new");
   }
+}
+
+// 入力欄をまっさらにして新規伝票画面をつくり直す
+function resetNewSlipForm(title) {
+  newSlipDraft = { type: null, count: null, plan: null, planPicked: false, rebook: false };
+  document.getElementById("new-slip-title").textContent = title;
+  document.querySelectorAll("#type-choice .choice-btn").forEach(b => b.classList.remove("selected"));
+  document.querySelectorAll("#count-choice .choice-btn").forEach(b => b.classList.remove("selected"));
+  document.getElementById("count-input-wrap").style.display = "none";
+  document.getElementById("count-input").value = "";
+  document.getElementById("note-input").value = "";
+  refreshRebookUi();
+  refreshPlanChoice();
+}
+
+// 卓ではなく名前で伝票を作る
+function startNamedSlip() {
+  currentTable = null;
+  currentSlipId = null;
+  nameMode = true;
+  nomiSetupOpen = false;
+  payUiOpen = false;
+  payDraft = { method: null, note: "" };
+  closeItemPicker();
+  closeModifierModal();
+  resetNewSlipForm("名前で新規伝票");
+  document.getElementById("name-wrap").style.display = "";
+  document.getElementById("name-input").value = "";
+  document.getElementById("new-table-switch").innerHTML = renderTableSwitch(null);
+  showView("new");
+  setTimeout(() => { const el = document.getElementById("name-input"); if (el) el.focus(); }, 60);
+}
+function newSlipName() {
+  const el = document.getElementById("name-input");
+  return el ? el.value.trim() : "";
 }
 
 document.getElementById("new-cancel-btn").addEventListener("click", () => {
@@ -578,6 +736,19 @@ document.querySelectorAll("#count-choice .choice-btn").forEach(btn => {
     }
   });
 });
+document.getElementById("name-input").addEventListener("input", updateCreateBtn);
+document.getElementById("rebook-btn").addEventListener("click", () => {
+  newSlipDraft.rebook = !newSlipDraft.rebook;
+  refreshRebookUi();
+});
+// 出戻り(チャージなし)の見た目を更新する
+function refreshRebookUi() {
+  const b = document.getElementById("rebook-btn");
+  if (b) b.classList.toggle("selected", !!newSlipDraft.rebook);
+  const n = document.getElementById("rebook-note");
+  if (n) n.style.display = newSlipDraft.rebook ? "" : "none";
+  refreshPlanChoice();
+}
 document.getElementById("count-input").addEventListener("input", (e) => {
   const v = parseInt(e.target.value, 10);
   setDraftCount(v > 0 ? v : null);
@@ -616,7 +787,9 @@ function refreshPlanChoice() {
       note.innerHTML = `飲み放題 <b>${n}名 × ${yen(NOMI_PER_PERSON)} = ${yen(n * NOMI_PER_PERSON)}</b>(2時間・チャージなし)<br>`
         + `<span style="color:var(--text-muted);">延長は1時間ごとに1人 ${yen(NOMI_EXTEND_PER_PERSON)}。時間のスタートは伝票を作ったあとに押します。</span>`;
     } else if (newSlipDraft.plan === "normal") {
-      note.innerHTML = `チャージ <b>${n}名 × ${yen(CHARGE_PER_PERSON)} = ${yen(n * CHARGE_PER_PERSON)}</b>(いつも通りの伝票)`;
+      note.innerHTML = newSlipDraft.rebook
+        ? `出戻りのため <b>チャージなし</b>(いつも通りの伝票)`
+        : `チャージ <b>${n}名 × ${yen(CHARGE_PER_PERSON)} = ${yen(n * CHARGE_PER_PERSON)}</b>(いつも通りの伝票)`;
     } else {
       note.innerHTML = `<span style="color:var(--danger); font-weight:600;">${NOMI_MIN_PEOPLE}名以上なので、どちらのプランか選んでください。</span>`;
     }
@@ -624,13 +797,18 @@ function refreshPlanChoice() {
   updateCreateBtn();
 }
 function updateCreateBtn() {
-  document.getElementById("new-create-btn").disabled = !(newSlipDraft.type && newSlipDraft.count && newSlipDraft.plan);
+  const nameOk = !nameMode || !!newSlipName();
+  document.getElementById("new-create-btn").disabled = !(nameOk && newSlipDraft.type && newSlipDraft.count && newSlipDraft.plan);
 }
 
 document.getElementById("new-create-btn").addEventListener("click", () => {
+  const tableName = nameMode ? newSlipName() : currentTable;
+  if (!tableName) { showToast("名前を入力してください"); return; }
+  if (nameMode && openSlipFor(tableName)) { showToast("その名前の伝票はすでに対応中です"); return; }
+  currentTable = tableName;
   const slip = {
     id: nextSlipId++,
-    table: currentTable,
+    table: tableName,
     type: newSlipDraft.type,
     count: newSlipDraft.count,
     note: document.getElementById("note-input").value.trim(),
@@ -642,12 +820,15 @@ document.getElementById("new-create-btn").addEventListener("click", () => {
   if (newSlipDraft.plan === "nomi") {
     slip.nomihodai = { count: slip.count, startAt: null, extends: 0 };
   }
+  // 出戻り = チャージをいただかない伝票
+  if (newSlipDraft.rebook) slip.rebook = true;
+  nameMode = false;
   slips.push(slip);
   currentSlipId = slip.id;
   activeItemTab = "liquor";
   showView("slip");
   renderSlipView();
-  saveData();
+  saveSlip(slip);
 });
 
 // ---- 合計計算 ----
@@ -660,7 +841,12 @@ function itemExtra(item) {
 // ---- 飲み放題プランの計算 ----
 function nomiPlan(slip) { return (slip && slip.nomihodai) ? slip.nomihodai : null; }
 // 飲み放題のときはチャージをもらわない(飲み放題料金に含まれているため)
-function chargeFor(slip) { return nomiPlan(slip) ? 0 : (slip.count || 0) * CHARGE_PER_PERSON; }
+// 出戻りの伝票もチャージなし
+function chargeFor(slip) {
+  if (nomiPlan(slip)) return 0;
+  if (slip && slip.rebook) return 0;
+  return (slip.count || 0) * CHARGE_PER_PERSON;
+}
 function nomiBaseFee(slip) {
   const n = nomiPlan(slip);
   return n ? n.count * NOMI_PER_PERSON : 0;
@@ -722,8 +908,8 @@ function renderSlipView() {
 
     <div class="slip-header">
       <div>
-        <div class="slip-title">${slip.table} 卓</div>
-        <div class="slip-meta"><b>${escapeHtml(slip.type)}</b> ・ <b>${slip.count}名</b> ・ ${nomi ? `飲み放題 <b>${nomi.count}名</b>(チャージなし)` : `チャージ ${yen(charge)}`}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}</div>
+        <div class="slip-title">${escapeHtml(slip.table)}${TABLES.includes(slip.table) ? " 卓" : ""}</div>
+        <div class="slip-meta"><b>${escapeHtml(slip.type)}</b> ・ <b>${slip.count}名</b> ・ ${nomi ? `飲み放題 <b>${nomi.count}名</b>(チャージなし)` : (slip.rebook ? `🔁 <b>出戻り</b>(チャージなし)` : `チャージ ${yen(charge)}`)}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}</div>
       </div>
       ${isPaid ? `<span class="paid-badge">お会計済(${escapeHtml(slip.payment ? (slip.payment.method + (slip.payment.note ? ':' + slip.payment.note : '')) : '')})</span>` : ''}
     </div>
@@ -795,7 +981,7 @@ function saveNomiPlan() {
   nomiSetupOpen = false;
   renderSlipView();
   renderTableGrid();
-  saveData();
+  saveSlip(slip);
 }
 function startNomiClock() {
   const slip = getCurrentSlip();
@@ -804,7 +990,7 @@ function startNomiClock() {
   n.startAt = new Date().toISOString();
   renderSlipView();
   renderTableGrid();
-  saveData();
+  saveSlip(slip);
 }
 function editNomiStart() {
   const slip = getCurrentSlip();
@@ -825,7 +1011,7 @@ function editNomiStart() {
   n.startAt = d.toISOString();
   renderSlipView();
   renderTableGrid();
-  saveData();
+  saveSlip(slip);
 }
 function extendNomi(delta) {
   const slip = getCurrentSlip();
@@ -836,7 +1022,7 @@ function extendNomi(delta) {
   n.extends = next;
   renderSlipView();
   renderTableGrid();
-  saveData();
+  saveSlip(slip);
 }
 
 function renderNomiPanel(slip, isPaid) {
@@ -959,6 +1145,7 @@ function openItemPicker() {
   pickerMode = "normal";
   stagedItems = [];
   activeItemTab = "liquor";
+  pickerGenre = null;
   renderItemPicker();
 }
 // 飲み放題の注文(0円)を選ぶ画面
@@ -969,6 +1156,7 @@ function openNomiPicker() {
   pickerMode = "nomi";
   stagedItems = [];
   activeItemTab = "liquor";
+  pickerGenre = null;
   renderItemPicker();
 }
 // 飲み放題で頼めるお酒(700円以下)
@@ -979,7 +1167,114 @@ function closeItemPicker() {
   pickerOpen = false;
   document.getElementById("item-picker-modal").innerHTML = "";
 }
-function pickerSetTab(tab) { activeItemTab = tab; renderItemPicker(); }
+function pickerSetTab(tab) { activeItemTab = tab; pickerGenre = null; renderItemPicker(); }
+function pickerSetGenre(g) { pickerGenre = g; renderItemPicker(); }
+function pickerBackToGenres() { pickerGenre = null; renderItemPicker(); }
+
+// ---- ジャンル一覧をつくる ----
+// お酒・おつまみは「商品があるジャンルだけ」、ボトルは決まった5つを必ず出す
+function pickerGenres(tab) {
+  if (tab === "liquor") {
+    const items = menu.liquors.map(l => ({...l, cat:"liquor"}));
+    const gs = groupByCategory(items, LIQUOR_CATEGORIES)
+      .map(g => ({ key: g.category, label: g.category, sub: g.items.length + "種類" }));
+    gs.push({ key: "__cocktail", label: "カクテル", sub: "おすすめ・シェイク・季節" });
+    gs.push({ key: "__shot", label: "ショット", sub: menu.shots.length ? menu.shots.length + "種類" : "未登録" });
+    gs.push({ key: "__custom", label: "複雑な注文", sub: "自由に入力", special: true });
+    return gs;
+  }
+  if (tab === "bottle") {
+    const items = menu.bottles.map(b => ({...b, cat:"bottle"}));
+    const counts = {};
+    groupByCategory(items, BOTTLE_CATEGORIES).forEach(g => { counts[g.category] = g.items.length; });
+    const gs = BOTTLE_CATEGORIES.map(c => ({
+      key: c,
+      label: c === "ワイン" ? "ワインボトル" : c,
+      sub: (counts[c] || 0) + "種類"
+    }));
+    gs.push({ key: "__mixer", label: "割材", sub: mixerOnlyList().length ? mixerOnlyList().length + "種類" : "未登録" });
+    gs.push({ key: "__custom", label: "複雑な注文", sub: "自由に入力", special: true });
+    return gs;
+  }
+  const items = menu.dishes.map(d => ({...d, cat:"dish"}));
+  const gs = groupByCategory(items, DISH_CATEGORIES)
+    .map(g => ({ key: g.category, label: g.category, sub: g.items.length + "種類" }));
+  gs.push({ key: "__custom", label: "複雑な注文", sub: "自由に入力", special: true });
+  return gs;
+}
+
+// ジャンルのボタンを押したときの動き
+function onGenreTap(key) {
+  if (key === "__custom") { openCustomModal(); return; }
+  if (key === "__shot") { openShotModal(); return; }
+  pickerSetGenre(key);
+}
+
+function renderGenreGrid(tab) {
+  return `<div class="genre-grid">
+    ${pickerGenres(tab).map(g => `
+      <button class="genre-tile ${g.special ? 'special' : ''}" onclick='onGenreTap(${JSON.stringify(g.key)})'>
+        ${escapeHtml(g.label)}<span class="g-sub">${escapeHtml(g.sub)}</span>
+      </button>`).join("")}
+  </div>`;
+}
+
+// ジャンル名(戻るボタンの横に出す見出し)
+function genreTitle(tab, key) {
+  const g = pickerGenres(tab).find(x => x.key === key);
+  return g ? g.label : key;
+}
+
+// 選んだジャンルの中の商品を並べる
+function renderGenreItems(tab, key) {
+  if (tab === "liquor") {
+    if (key === "__cocktail") {
+      return `<div class="item-grid">
+        <button class="item-tile" onclick="openCocktailModal('recommend')"><b>おすすめカクテル</b>800円〜1500円</button>
+        <button class="item-tile" onclick="openCocktailModal('shake')"><b>シェイクカクテル</b>800円〜1500円</button>
+        <button class="item-tile" onclick="openSeasonalModal()"><b>季節のカクテル</b>${(menu.cocktails || []).length ? (menu.cocktails || []).length + "種類" : "未登録"}</button>
+      </div>`;
+    }
+    const items = menu.liquors.map(l => ({...l, cat:"liquor"}));
+    const grp = groupByCategory(items, LIQUOR_CATEGORIES).find(g => g.category === key);
+    const list = grp ? grp.items : [];
+    if (!list.length) return '<div class="empty-msg">このジャンルにはまだ商品が登録されていません</div>';
+    return `<div class="item-grid">
+      ${list.map(i => { const n = stagedCountFor(i.name, "liquor");
+        return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.sellPrice)}</button>`;
+      }).join("")}
+    </div>`;
+  }
+  if (tab === "bottle") {
+    if (key === "__mixer") {
+      const ms = mixerOnlyList();
+      if (!ms.length) return '<div class="empty-msg">値段確認アプリにソフトドリンク(600円/800円)が登録されていません</div>';
+      return `<div class="item-grid">
+        ${ms.map(m => { const n = stagedCountFor(mixerOnlyName(m.name), "liquor");
+          return `<button class="item-tile ${n ? 'staged' : ''}" onclick="addMixerOnly(${m.id})"><b>${escapeHtml(m.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>＋${m.extra}円</button>`;
+        }).join("")}
+      </div>`;
+    }
+    const items = menu.bottles.map(b => ({...b, cat:"bottle"}));
+    const grp = groupByCategory(items, BOTTLE_CATEGORIES).find(g => g.category === key);
+    const list = grp ? grp.items : [];
+    if (!list.length) return '<div class="empty-msg">このジャンルにはまだ商品が登録されていません</div>';
+    return `<div class="item-grid">
+      ${list.map(i => { const n = stagedCountFor(i.name, "bottle");
+        return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "bottle")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`;
+      }).join("")}
+    </div>`;
+  }
+  const items = menu.dishes.map(d => ({...d, cat:"dish"}));
+  const grp = groupByCategory(items, DISH_CATEGORIES).find(g => g.category === key);
+  const list = grp ? grp.items : [];
+  if (!list.length) return '<div class="empty-msg">このジャンルにはまだ商品が登録されていません</div>';
+  return `<div class="item-grid">
+    ${list.map(i => { const n = stagedCountFor(i.name, "dish");
+      return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${i.id}, "dish")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`;
+    }).join("")}
+  </div>`;
+}
 function stagedTotal() { return stagedItems.reduce((s,i) => s + (i.price + itemExtra(i)) * (i.qty || 1), 0); }
 function stagedCount() { return stagedItems.reduce((s,i) => s + (i.qty || 1), 0); }
 function removeStaged(idx) { stagedItems.splice(idx, 1); renderItemPicker(); }
@@ -994,7 +1289,7 @@ function confirmStaged() {
   });
   closeItemPicker();
   renderSlipView();
-  saveData();
+  saveSlip(slip);
 }
 // 今えらんでいる項目のリスト(画面下に出す共通部分)
 function renderStagedBlock(confirmLabel) {
@@ -1025,12 +1320,14 @@ function renderStagedBlock(confirmLabel) {
   `;
 }
 
-// 飲み放題の注文画面(0円のお酒だけ)
+// 飲み放題の注文画面(0円のお酒だけ)。こちらもジャンルを選んでから商品を出す
 function renderNomiPicker() {
   const items = nomiEligibleLiquors().map(l => ({...l, cat:"liquor"}));
+  const groups = groupByCategory(items, LIQUOR_CATEGORIES);
   const modal = document.getElementById("item-picker-modal");
   const prevBox = modal.querySelector(".modal-box");
   const prevScroll = prevBox ? prevBox.scrollTop : 0;
+  const grp = pickerGenre === null ? null : groups.find(g => g.category === pickerGenre);
   modal.innerHTML = `
     <div class="modal-backdrop">
       <div class="modal-box" style="max-width:600px; max-height:85vh; overflow-y:auto;">
@@ -1041,12 +1338,19 @@ function renderNomiPicker() {
         </div>
         ${items.length === 0
           ? '<div class="empty-msg">値段確認アプリに' + NOMI_PRICE_LIMIT + '円以下のお酒が登録されていません</div>'
-          : groupByCategory(items, LIQUOR_CATEGORIES).map(g => `
-              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
-              <div class="item-grid">
-                ${g.items.map(i => { const n = stagedCountFor(i.name, "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>¥0<span class="nomi-tag">飲み放題</span></button>`; }).join("")}
-              </div>
-            `).join("")
+          : (pickerGenre === null
+            ? `<div class="genre-grid">
+                ${groups.map(g => `<button class="genre-tile" onclick='pickerSetGenre(${JSON.stringify(g.category)})'>${escapeHtml(g.category)}<span class="g-sub">${g.items.length}種類</span></button>`).join("")}
+              </div>`
+            : `<div class="picker-crumb">
+                 <button class="btn-back" onclick="pickerBackToGenres()">← ジャンル</button>
+                 <span class="now">${escapeHtml(String(pickerGenre))}</span>
+               </div>
+               <div class="item-grid">
+                 ${(grp ? grp.items : []).map(i => { const n = stagedCountFor(i.name, "liquor");
+                   return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>¥0<span class="nomi-tag">飲み放題</span></button>`;
+                 }).join("")}
+               </div>`)
         }
         ${renderStagedBlock("飲み放題として追加")}
       </div>
@@ -1058,9 +1362,6 @@ function renderNomiPicker() {
 
 function renderItemPicker() {
   if (pickerMode === "nomi") { renderNomiPicker(); return; }
-  const liquorItems = menu.liquors.map(l => ({...l, cat:"liquor"}));
-  const bottleItems = menu.bottles.map(b => ({...b, cat:"bottle"}));
-  const dishItems = menu.dishes.map(d => ({...d, cat:"dish"}));
   const modal = document.getElementById("item-picker-modal");
   // 作り直しでスクロール位置が先頭に戻らないように、今の位置を覚えておく
   const prevBox = modal.querySelector(".modal-box");
@@ -1074,55 +1375,14 @@ function renderItemPicker() {
           <button class="${activeItemTab==='bottle' ? 'active':''}" onclick="pickerSetTab('bottle')">お酒(ボトル)</button>
           <button class="${activeItemTab==='dish' ? 'active':''}" onclick="pickerSetTab('dish')">おつまみ・料理</button>
         </div>
-        ${activeItemTab === 'liquor'
-          ? groupByCategory(liquorItems, LIQUOR_CATEGORIES).map(g => `
-              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
-              <div class="item-grid">
-                ${g.items.map(i => { const n = stagedCountFor(i.name, "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "liquor")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.sellPrice)}</button>`; }).join("")}
-              </div>
-            `).join("")
-          : activeItemTab === 'bottle'
-          ? groupByCategory(bottleItems, BOTTLE_CATEGORIES).map(g => `
-              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
-              <div class="item-grid">
-                ${g.items.map(i => { const n = stagedCountFor(i.name, "bottle"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${JSON.stringify(i.id)}, "bottle")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`; }).join("")}
-              </div>
-            `).join("")
-            + `
-              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">割材</h4>
-              ${mixerOnlyList().length === 0
-                ? '<div class="empty-msg">値段確認アプリにソフトドリンク(600円/800円)が登録されていません</div>'
-                : `<div class="item-grid">
-                    ${mixerOnlyList().map(m => { const n = stagedCountFor(mixerOnlyName(m.name), "liquor"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick="addMixerOnly(${m.id})"><b>${escapeHtml(m.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>＋${m.extra}円</button>`; }).join("")}
-                  </div>`
-              }
-            `
-          : groupByCategory(dishItems, DISH_CATEGORIES).map(g => `
-              <h4 style="font-size:12px; color:var(--text-muted); margin:10px 0 6px;">${escapeHtml(g.category)}</h4>
-              <div class="item-grid">
-                ${g.items.map(i => { const n = stagedCountFor(i.name, "dish"); return `<button class="item-tile ${n ? 'staged' : ''}" onclick='onItemTap(${i.id}, "dish")'><b>${escapeHtml(i.name)}${n ? `<span class="tile-badge">×${n}</span>` : ''}</b>${yen(i.price)}</button>`; }).join("")}
-              </div>
-            `).join("")
+        ${pickerGenre === null
+          ? renderGenreGrid(activeItemTab)
+          : `<div class="picker-crumb">
+               <button class="btn-back" onclick="pickerBackToGenres()">← ジャンル</button>
+               <span class="now">${escapeHtml(genreTitle(activeItemTab, pickerGenre))}</span>
+             </div>
+             ${renderGenreItems(activeItemTab, pickerGenre)}`
         }
-        ${(activeItemTab === 'liquor' ? liquorItems.length===0 : activeItemTab === 'dish' ? dishItems.length===0 : false) ? '<div class="empty-msg">値段確認アプリでまだ品目が登録されていません</div>' : ''}
-
-        ${activeItemTab === 'liquor' ? `
-        <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">カクテル</h4>
-        <div class="item-grid">
-          <button class="item-tile" onclick="openCocktailModal('recommend')"><b>おすすめカクテル</b>800円〜1500円</button>
-          <button class="item-tile" onclick="openCocktailModal('shake')"><b>シェイクカクテル</b>800円〜1500円</button>
-          <button class="item-tile" onclick="openSeasonalModal()"><b>季節のカクテル</b>${(menu.cocktails || []).length ? (menu.cocktails || []).length + "種類" : "未登録"}</button>
-        </div>
-
-        <h4 style="font-size:12px; color:var(--text-muted); margin:16px 0 6px;">ショット</h4>
-        <div class="item-grid">
-          <button class="item-tile" onclick="openShotModal()"><b>ショット</b>${menu.shots.length ? menu.shots.length + "種類" : "未登録"}</button>
-        </div>
-        ` : ''}
-
-        <div class="item-grid">
-          <button class="item-tile custom-tile" onclick="openCustomModal()">＋ 複雑な注文</button>
-        </div>
         ${renderStagedBlock("伝票に追加")}
       </div>
     </div>
@@ -1193,7 +1453,7 @@ function toggleCancelItem(itemId) {
   const item = slip.items.find(i => i.id === itemId);
   if (item) item.cancelled = !item.cancelled;
   renderSlipView();
-  saveData();
+  saveSlip(slip);
 }
 
 function startPayment() {
@@ -1226,7 +1486,7 @@ function finalizePaid() {
   payUiOpen = false;
   renderSlipView();
   renderTableGrid();
-  saveData();
+  saveSlip(slip);
 }
 
 // ---- 品目タップ ----
@@ -1562,7 +1822,7 @@ let customMixerExtra = 0; // 割材の追加金額(0 / 100 / 200)
 let customMixerOpen = false;
 
 function openCustomModal() {
-  const catLabel = activeItemTab === 'liquor' ? 'お酒' : 'おつまみ・料理';
+  const catLabel = activeItemTab === 'liquor' ? 'お酒' : activeItemTab === 'bottle' ? 'お酒(ボトル)' : 'おつまみ・料理';
   customMixerExtra = 0;
   customMixerOpen = false;
   const modal = document.getElementById("modifier-modal");
@@ -1607,12 +1867,29 @@ function confirmCustomOrder() {
   if (!desc || !basePrice) { return; }
   const price = basePrice + (customMixerExtra || 0);
   const name = customMixerExtra ? `${desc}(割材+${customMixerExtra}円)` : desc;
-  addStaged({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() }, 1);
+  addStaged({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : activeItemTab === 'bottle' ? 'bottle' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() }, 1);
   closeModifierModal();
   renderItemPicker();
 }
 
 document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
+
+// ---- 自動更新 ----
+// 何か操作している最中に画面を作り直すと入力が飛ぶので、手が止まっているときだけ更新する
+function uiBusy() {
+  if (saving || pickerOpen || payUiOpen || nomiSetupOpen) return true;
+  if (stagedItems.length) return true;
+  if (document.querySelector("#item-picker-modal .modal-backdrop")) return true;
+  if (document.querySelector("#modifier-modal .modal-backdrop")) return true;
+  const vn = document.getElementById("view-new");
+  if (vn && vn.style.display !== "none") return true;   // 新規伝票の入力中
+  return false;
+}
+setInterval(() => { if (!uiBusy()) loadData(); }, 20000);
+// 画面に戻ってきたとき(別アプリから切り替えた・スリープ解除)はすぐ取り込む
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !uiBusy()) loadData(); });
+window.addEventListener("focus", () => { if (!uiBusy() && Date.now() - lastSyncAt > 5000) loadData(); });
+
 loadData();
 </script>
 </body>
