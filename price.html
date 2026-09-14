@@ -30,6 +30,13 @@
   .app { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; }
   h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
   .subtitle { font-size: 13px; color: var(--text-secondary); margin: 0 0 16px; }
+  #load-alert {
+    background: #fdecec; border: 2px solid #d64545; color: #8a1c1c;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; font-size: 15px; line-height: 1.6;
+  }
+  #load-alert b { font-weight: 800; }
+  #load-alert button { margin-top: 8px; background:#d64545; color:#fff; border:none;
+    border-radius:8px; padding:9px 16px; font-size:14px; font-weight:700; cursor:pointer; }
   .sync-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; padding: 6px 10px; background: var(--surface-2); border-radius: 6px; }
   .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
   .sync-dot.syncing { background: var(--accent); }
@@ -80,6 +87,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 <div class="app">
   <h1>Bar KAMAKURA 値段確認</h1>
   <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率17.5%で自動計算)</p>
+  <div id="load-alert" style="display:none"></div>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
 
   <div class="tab-row">
@@ -248,6 +256,14 @@ function setSync(state, text) {
   label.textContent = text;
 }
 
+function setLoadAlert(msg) {
+  const el = document.getElementById("load-alert");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  el.innerHTML = msg + '<br><button onclick="loadData()">もう一度読み込む</button>';
+}
+
 async function loadData() {
   setSync("syncing", "読み込み中...");
   try {
@@ -261,10 +277,16 @@ async function loadData() {
     const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails, ...menu.shots].map(i => i.id || 0);
     nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
     loaded = true;
+    setLoadAlert("");
     setSync("", "同期済み(全員で共有中)");
     migrateHotDrinkPrices();
   } catch (e) {
+    // ⚠️ ここで loaded を立てない。立てると「空っぽの一覧」を保存してしまい、
+    //    登録済みの商品が全部消える(v32で対策)
     setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+    setLoadAlert("⚠️ <b>お店のデータを読み込めませんでした。</b><br>"
+      + "電波・Wi-Fiを確認してください。<br>"
+      + "<b>読み込めるまで登録・変更はしないでください。</b>（今登録しても保存されません）");
   }
   renderAll();
 }
@@ -282,12 +304,49 @@ function migrateHotDrinkPrices() {
   if (changed) { saveData(); }
 }
 
+// この端末で消した商品のid。突き合わせのときに復活させないため
+const deletedMenuIds = new Set();
+const MENU_KEYS = ["dishes", "liquors", "bottles", "cocktails", "shots"];
+
+// サーバー側の一覧と、この端末の一覧を1件ずつ突き合わせる。
+// 以前は menuItems を丸ごと置き換えていたため、
+// 読み込みに失敗した直後に何か登録すると、登録済みの商品が全部消えていた。
+function mergeMenu(serverMenu, localMenu) {
+  const out = {};
+  MENU_KEYS.forEach(k => {
+    const map = new Map();
+    (serverMenu && serverMenu[k] || []).forEach(x => {
+      if (x && x.id != null && !deletedMenuIds.has(x.id)) map.set(x.id, x);
+    });
+    (localMenu && localMenu[k] || []).forEach(x => {
+      if (x && x.id != null && !deletedMenuIds.has(x.id)) map.set(x.id, x); // 手元の内容を優先
+    });
+    out[k] = [...map.values()];
+  });
+  return out;
+}
+
+let saving = false, saveQueued = false, saveTimer = null, saveFails = 0;
+
 async function saveData() {
+  // ⚠️ 読み込めていない状態で保存すると、登録済みの商品を空で上書きしてしまう
+  if (!loaded) {
+    setSync("error", "まだ読み込めていないので保存しません");
+    setLoadAlert("⚠️ <b>お店のデータを読み込めていないため、保存していません。</b><br>"
+      + "電波・Wi-Fiを確認して読み込み直してから、もう一度登録してください。");
+    return;
+  }
+  if (saving) { saveQueued = true; return; }
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  saving = true;
   setSync("syncing", "保存中...");
   try {
     const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
     if (!res0.ok) throw new Error("reload failed");
     fullRecord = (await res0.json()).record || {};
+    menu = mergeMenu(fullRecord.menuItems, menu);
+    if (!menu.cocktails) menu.cocktails = [];
+    if (!menu.shots) menu.shots = [];
     fullRecord.menuItems = menu;
     const res = await fetch(BASE_URL, {
       method: "PUT",
@@ -295,9 +354,19 @@ async function saveData() {
       body: JSON.stringify(fullRecord)
     });
     if (!res.ok) throw new Error("save failed");
+    saveFails = 0;
+    setLoadAlert("");
     setSync("", "同期済み(全員で共有中)");
+    renderAll();
   } catch (e) {
+    saveFails++;
+    const wait = Math.min(30, 3 * saveFails);
     setSync("error", "保存エラー、通信状況を確認してください");
+    setLoadAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗）。${wait}秒後に自動で再試行します。<br>この画面を閉じないでください。`);
+    saveTimer = setTimeout(() => { saveTimer = null; saveData(); }, wait * 1000);
+  } finally {
+    saving = false;
+    if (saveQueued) { saveQueued = false; saveData(); }
   }
 }
 
@@ -481,6 +550,7 @@ document.getElementById("liq-add").addEventListener("click", () => {
 
 // ---- delete ----
 function deleteItem(category, id) {
+  deletedMenuIds.add(id);      // 突き合わせで復活しないように覚えておく
   menu[category] = menu[category].filter(i => i.id !== id);
   renderAll();
   saveData();

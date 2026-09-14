@@ -1,8 +1,9 @@
 // Bar KAMAKURA 業務アプリ — オフライン用サービスワーカー
 // アプリの画面ファイルだけを端末に保存します。
 // お店のデータ(jsonbin)は必ずネット経由で取りに行くので、古いデータが表示されることはありません。
+// 画面のファイルもネット優先。オフラインのときだけ保存分を使います。
 
-const CACHE = "bk-app-v31";
+const CACHE = "bk-app-v32";
 const SHELL = [
   "./",
   "./index.html",
@@ -39,19 +40,19 @@ self.addEventListener("fetch", e => {
   // 他サイト(jsonbin など)は常にネットワークへ。キャッシュしない。
   if (url.origin !== self.location.origin) return;
 
-  // 自サイトのファイルはキャッシュ優先。裏で最新版を取り直す。
+  // 画面のファイルは「ネット優先」。
+  // キャッシュ優先にしていたせいで、GitHubに新しい版を上げても
+  // 端末には古い画面が出続けることがあった(v32で変更)。
+  // ネットがつながらないときだけ、保存してあるものを出す。
   e.respondWith(
-    caches.match(req).then(hit => {
-      const fresh = fetch(req)
-        .then(res => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then(c => c.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => hit);
-      return hit || fresh;
-    })
+    fetch(req)
+      .then(res => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(req).then(hit => hit || Response.error()))
   );
 });

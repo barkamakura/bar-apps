@@ -256,10 +256,12 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
         <label>名前(必須)</label>
         <input type="text" id="name-input" placeholder="例: 山田様 / 立ち飲み1">
       </div>
-      <label>新規 or 常連(必須)</label>
-      <div class="choice-row" id="type-choice">
-        <div class="choice-btn" data-val="新規">新規</div>
-        <div class="choice-btn" data-val="常連">常連</div>
+      <div id="type-wrap">
+        <label>新規 or 常連(必須)</label>
+        <div class="choice-row" id="type-choice">
+          <div class="choice-btn" data-val="新規">新規</div>
+          <div class="choice-btn" data-val="常連">常連</div>
+        </div>
       </div>
       <label>人数(必須)</label>
       <div class="choice-row" id="count-choice">
@@ -440,7 +442,9 @@ async function loadData() {
     lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
+    // ⚠️ ここで loaded を立てない(空のまま保存すると伝票が消える)
     setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+    if (!loaded) setSaveAlert("⚠️ <b>お店のデータを読み込めませんでした。</b> 電波・Wi-Fiを確認して「🔄 更新」を押してください。読み込めるまで伝票を作らないでください。");
   }
   renderTableGrid();
   if (currentSlipId) renderSlipView();
@@ -463,6 +467,12 @@ function setSaveAlert(msg) {
 }
 
 async function saveData() {
+  // ⚠️ 読み込めていない状態で保存すると、他の伝票を空で上書きしてしまう
+  if (!loaded) {
+    setSync("error", "まだ読み込めていないので保存しません");
+    setSaveAlert("⚠️ <b>お店のデータを読み込めていないため、保存していません。</b> 電波・Wi-Fiを確認して「🔄 更新」を押してください。");
+    return;
+  }
   if (saving) { saveQueued = true; return; }      // 二重送信を防ぐ
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   saving = true;
@@ -668,6 +678,7 @@ function selectTable(table) {
   } else {
     nameMode = false;
     resetNewSlipForm("新規伝票 - " + table);
+    document.getElementById("type-wrap").style.display = "";
     document.getElementById("name-wrap").style.display = "none";
     document.getElementById("new-table-switch").innerHTML = renderTableSwitch(table);
     showView("new");
@@ -698,6 +709,9 @@ function startNamedSlip() {
   closeItemPicker();
   closeModifierModal();
   resetNewSlipForm("名前で新規伝票");
+  // 名前で作るときは「新規 or 常連」を聞かない
+  document.getElementById("type-wrap").style.display = "none";
+  newSlipDraft.type = "名前";
   document.getElementById("name-wrap").style.display = "";
   document.getElementById("name-input").value = "";
   document.getElementById("new-table-switch").innerHTML = renderTableSwitch(null);
@@ -909,7 +923,7 @@ function renderSlipView() {
     <div class="slip-header">
       <div>
         <div class="slip-title">${escapeHtml(slip.table)}${TABLES.includes(slip.table) ? " 卓" : ""}</div>
-        <div class="slip-meta"><b>${escapeHtml(slip.type)}</b> ・ <b>${slip.count}名</b> ・ ${nomi ? `飲み放題 <b>${nomi.count}名</b>(チャージなし)` : (slip.rebook ? `🔁 <b>出戻り</b>(チャージなし)` : `チャージ ${yen(charge)}`)}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}</div>
+        <div class="slip-meta">${slip.type && slip.type !== "名前" ? `<b>${escapeHtml(slip.type)}</b> ・ ` : ""}<b>${slip.count}名</b> ・ ${nomi ? `飲み放題 <b>${nomi.count}名</b>(チャージなし)` : (slip.rebook ? `🔁 <b>出戻り</b>(チャージなし)` : `チャージ ${yen(charge)}`)}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}</div>
       </div>
       ${isPaid ? `<span class="paid-badge">お会計済(${escapeHtml(slip.payment ? (slip.payment.method + (slip.payment.note ? ':' + slip.payment.note : '')) : '')})</span>` : ''}
     </div>
@@ -1876,6 +1890,13 @@ document.getElementById("refresh-btn").addEventListener("click", () => { loadDat
 
 // ---- 自動更新 ----
 // 何か操作している最中に画面を作り直すと入力が飛ぶので、手が止まっているときだけ更新する
+// 画面に出ていないとき(タブが裏 / まとめアプリで別タブを見ている)は通信しない。
+// jsonbinへの通信回数を減らすため。
+function offscreen() {
+  if (document.hidden) return true;
+  if (!document.body || document.body.clientWidth === 0) return true;  // 非表示のiframe
+  return false;
+}
 function uiBusy() {
   if (saving || pickerOpen || payUiOpen || nomiSetupOpen) return true;
   if (stagedItems.length) return true;
@@ -1885,7 +1906,8 @@ function uiBusy() {
   if (vn && vn.style.display !== "none") return true;   // 新規伝票の入力中
   return false;
 }
-setInterval(() => { if (!uiBusy()) loadData(); }, 20000);
+// 20秒ごとだとjsonbinへの通信が多くなりすぎるので60秒。画面が隠れている間は止める
+setInterval(() => { if (!offscreen() && !uiBusy()) loadData(); }, 60000);
 // 画面に戻ってきたとき(別アプリから切り替えた・スリープ解除)はすぐ取り込む
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !uiBusy()) loadData(); });
 window.addEventListener("focus", () => { if (!uiBusy() && Date.now() - lastSyncAt > 5000) loadData(); });

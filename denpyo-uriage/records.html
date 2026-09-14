@@ -140,6 +140,7 @@ const BIN_ID = "6a843737da38895dfef24f99";
 const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
 const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 const CHARGE_PER_PERSON = 500;
+const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 // ---- 営業日の区切り ----
 // 「9月1日」は 9月1日 17:00 〜 9月2日 16:59 のこと。
 // 17時より前のお会計は、前の日の売上として数えます。
@@ -188,6 +189,7 @@ async function loadData() {
 // 以前は「サーバーのお会計済みを全部捨てて、この端末が持っている分だけ書き戻す」形だったため、
 // 消去のタイミング次第で直前のお会計が消えることがあった。
 async function saveData() {
+  if (!loaded) { alert("お店のデータをまだ読み込めていません。通信を確認して「🔄 更新」を押してください。"); return; }
   if (saving) return;
   saving = true;
   setSync("syncing", "保存中...");
@@ -219,12 +221,20 @@ document.getElementById("refresh-btn").addEventListener("click", () => { loadDat
 
 // ---- 自動更新 ----
 // 伝票アプリでお会計したら、こちらを触らなくても最大20秒で反映される
+// 画面に出ていないとき(タブが裏 / まとめアプリで別タブを見ている)は通信しない。
+// jsonbinへの通信回数を減らすため。
+function offscreen() {
+  if (document.hidden) return true;
+  if (!document.body || document.body.clientWidth === 0) return true;  // 非表示のiframe
+  return false;
+}
 function recBusy() {
   if (saving) return true;
   if (document.querySelector("#detail-modal .modal-backdrop")) return true;  // 明細を見ている最中
   return false;
 }
-setInterval(() => { if (!recBusy()) loadData(); }, 20000);
+// 60秒ごと。画面が隠れている間は通信しない(jsonbinの回数を節約)
+setInterval(() => { if (!offscreen() && !recBusy()) loadData(); }, 60000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !recBusy()) loadData(); });
 window.addEventListener("focus", () => { if (!recBusy() && Date.now() - lastSyncAt > 5000) loadData(); });
 
@@ -391,7 +401,7 @@ function renderList(list) {
   el.innerHTML = list.map(s => `
     <div class="rec-row">
       <div class="rec-main">
-        <span class="rec-table">${s.table} 卓 ・ ${escapeHtml(s.type || "")} ・ ${s.count}名</span>
+        <span class="rec-table">${escapeHtml(s.table)}${TABLES.includes(s.table) ? " 卓" : ""}${s.type && s.type !== "名前" ? " ・ " + escapeHtml(s.type) : ""} ・ ${s.count}名${s.rebook ? " ・ 🔁出戻り" : ""}</span>
         <span class="rec-sub">${bizTag(s.paidAt)}作成 ${fmtDateTime(s.createdAt)} ／ 会計 ${fmtDateTime(s.paidAt)}${s.payment ? ` <span class="pay-tag">${escapeHtml(s.payment.method)}${s.payment.note ? ':' + escapeHtml(s.payment.note) : ''}</span>` : ''}</span>
       </div>
       <div style="display:flex; align-items:center; gap:14px;">
@@ -418,7 +428,7 @@ function renderTrash() {
   el.innerHTML = deletedSlips.slice().sort((a,b) => new Date(b.deletedAt||0) - new Date(a.deletedAt||0)).map(s => `
     <div class="rec-row">
       <div class="rec-main">
-        <span class="rec-table">${s.table} 卓 ・ ${escapeHtml(s.type || "")} ・ ${s.count}名</span>
+        <span class="rec-table">${escapeHtml(s.table)}${TABLES.includes(s.table) ? " 卓" : ""}${s.type && s.type !== "名前" ? " ・ " + escapeHtml(s.type) : ""} ・ ${s.count}名${s.rebook ? " ・ 🔁出戻り" : ""}</span>
         <span class="rec-sub">会計 ${fmtDateTime(s.paidAt)} ／ 消去 ${fmtDateTime(s.deletedAt)}</span>
         <span class="rec-sub">消去理由: <b>${escapeHtml(s.deleteReason || "")}</b></span>
       </div>
@@ -476,9 +486,9 @@ function showDetail(slipId, fromTrash) {
   modal.innerHTML = `
     <div class="modal-backdrop" onclick="event.target===event.currentTarget && closeDetail()">
       <div class="modal-box">
-        <h3>${escapeHtml(slip.table)}${["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"].includes(slip.table) ? " 卓" : ""} 明細</h3>
+        <h3>${escapeHtml(slip.table)}${TABLES.includes(slip.table) ? " 卓" : ""} 明細</h3>
         <div class="modal-meta">
-          <b>${escapeHtml(slip.type || "")}</b> ・ <b>${slip.count}名</b>${slip.rebook ? " ・ <b>🔁 出戻り</b>" : ""}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}<br>
+          ${slip.type && slip.type !== "名前" ? `<b>${escapeHtml(slip.type)}</b> ・ ` : ""}<b>${slip.count}名</b>${slip.rebook ? " ・ <b>🔁 出戻り</b>" : ""}${slip.note ? " ・ " + escapeHtml(slip.note) : ""}<br>
           営業日: <b>${bizDayText(slip.paidAt)}</b>(17時区切り)<br>
           伝票作成: <b>${fmtDateTime(slip.createdAt)}</b><br>
           お会計: <b>${fmtDateTime(slip.paidAt)}</b><br>
