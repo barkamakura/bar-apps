@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<title>Bar KAMAKURA アプリの更新</title>
+<style>
+  :root { --accent:#1a63c9; --good:#1a8f5a; --danger:#d64545; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 18px; background:#f7f6f3; color:#211f1c;
+         font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  .box { max-width: 520px; margin: 0 auto; background:#fff; border-radius:16px; padding:26px 22px;
+         box-shadow: 0 8px 30px rgba(0,0,0,.08); }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.sub { margin:0 0 20px; color:#6b6760; font-size:14px; line-height:1.6; }
+  #steps { list-style:none; padding:0; margin:0 0 20px; }
+  #steps li { padding:12px 0; border-bottom:1px solid #eeebe6; font-size:15px; display:flex; gap:10px; align-items:center; }
+  #steps li:last-child { border-bottom:none; }
+  .mark { width:24px; text-align:center; font-size:17px; }
+  .done .mark { color: var(--good); }
+  .fail .mark { color: var(--danger); }
+  #result { font-size:16px; font-weight:700; padding:14px; border-radius:10px; text-align:center;
+            background:#eaf6ef; color:#14663f; display:none; line-height:1.6; }
+  a.btn { display:block; text-align:center; background:var(--accent); color:#fff; text-decoration:none;
+          padding:16px; border-radius:12px; font-size:17px; font-weight:800; margin-top:16px; }
+  .note { font-size:13px; color:#6b6760; margin-top:18px; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>アプリを最新にします</h1>
+  <p class="sub">この画面を開くと、端末に残っている古い画面のデータを消して、最新版を読み込み直します。<br>データ（伝票・商品・売上）は消えません。</p>
+  <ul id="steps">
+    <li id="s1"><span class="mark">…</span><span>古いオフライン機能を止める</span></li>
+    <li id="s2"><span class="mark">…</span><span>保存された古い画面を消す</span></li>
+    <li id="s3"><span class="mark">…</span><span>最新版があるか確認する</span></li>
+  </ul>
+  <div id="result"></div>
+  <a class="btn" id="go" href="./index.html">アプリを開く</a>
+  <p class="note">
+    ホーム画面のアイコンから開いているときは、この画面のあと<b>アプリを一度完全に終了</b>してから開き直してください。<br>
+    うまくいかないときは、この画面をもう一度開いてください。
+  </p>
+</div>
+
+<script>
+function mark(id, ok, extra) {
+  const li = document.getElementById(id);
+  li.classList.add(ok ? "done" : "fail");
+  li.querySelector(".mark").textContent = ok ? "✓" : "！";
+  if (extra) li.lastElementChild.textContent += "（" + extra + "）";
+}
+
+(async function () {
+  // 1) サービスワーカー(オフライン機能)を全部解除する
+  let n = 0;
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) { await r.unregister(); n++; }
+    }
+    mark("s1", true, n ? n + "件 解除" : "もともと無し");
+  } catch (e) { mark("s1", false, String(e).slice(0, 40)); }
+
+  // 2) 保存された画面(キャッシュ)を全部消す
+  let c = 0;
+  try {
+    if (window.caches) {
+      const keys = await caches.keys();
+      for (const k of keys) { await caches.delete(k); c++; }
+    }
+    mark("s2", true, c ? c + "件 削除" : "もともと無し");
+  } catch (e) { mark("s2", false, String(e).slice(0, 40)); }
+
+  // 3) サーバーにある最新版のバージョンを見に行く
+  let ver = "";
+  try {
+    const t = await (await fetch("./slip.html?bust=" + Date.now(), { cache: "no-store" })).text();
+    const m = t.match(/ver-badge">(v[0-9]+)</);
+    ver = m ? m[1] : "";
+    mark("s3", true, ver ? "最新は " + ver : "確認できず");
+  } catch (e) { mark("s3", false, "ネットにつながりません"); }
+
+  const r = document.getElementById("result");
+  r.style.display = "";
+  r.innerHTML = ver
+    ? "準備ができました。<br>下のボタンで開くと <b>" + ver + "</b> になります。"
+    : "古いデータは消しました。<br>下のボタンからアプリを開いてください。";
+  document.getElementById("go").href = "./index.html?fresh=" + Date.now();
+})();
+</script>
+</body>
+</html>

@@ -88,6 +88,8 @@
   </div>
 
 <script>
+// 画面ファイルのバージョン。更新のたびに上げる(古い画面が残らないように)
+const APP_VER = "v36";
 function showTab(name) {
   ['receipt','records'].forEach(n => {
     document.getElementById('tab-'+n).classList.toggle('active', n===name);
@@ -115,7 +117,8 @@ function unlock() {
   try { localStorage.setItem(UNLOCK_KEY, "1"); } catch (e) {}
   document.getElementById("lock").classList.add("hidden");
   document.querySelectorAll(".frame-wrap iframe").forEach(f => {
-    if (!f.src) f.src = f.dataset.src;
+    // バージョンを付けて読み込む。古い画面が残らないようにするため
+    if (!f.src) f.src = f.dataset.src + "?" + APP_VER;
   });
 }
 
@@ -148,8 +151,20 @@ try {
 } catch (e) {}
 
 // ---- オフライン対応 ----
+// v35: オフライン機能(サービスワーカー)はやめました。
+// 端末に古い画面が残って更新が反映されない原因だったためです。
+// すでに登録されているものがあれば、ここで解除して保存済みの画面も消します。
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  window.addEventListener("load", async () => {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch (e) {}
+  });
 }
 </script>
 </body>

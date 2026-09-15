@@ -93,7 +93,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>売上記録（Bar KAMAKURA）<span class="ver-badge">v34</span></h1>
+  <h1>売上記録（Bar KAMAKURA）<span class="ver-badge">v36</span></h1>
   <p class="subtitle">お会計済の伝票を自動で記録します(半永久保存・明細つき)</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
   <div style="margin-bottom:14px; display:flex; gap:8px; flex-wrap:wrap;">
@@ -153,7 +153,8 @@ const DAY_START_HOUR = 17;
 let fullRecord = {};
 let allSlips = [];
 let deletedSlips = [];
-let loaded = false;
+let loaded = false;        // 画面に出してよいか
+let serverLoaded = false;  // サーバーから読めているか(書き込みを許すか)
 let lastSyncAt = 0;
 let periodMode = "day";
 let showingTrash = false;
@@ -167,6 +168,30 @@ function setSync(state, text) {
 
 let saving = false;
 
+function netWhy(e) {
+  if (navigator.onLine === false) return "端末がオフラインです";
+  const m = String((e && e.message) || e || "");
+  if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
+  if (m.includes("429")) return "アクセスが集中しています";
+  if (m.includes("403")) return "サーバーに断られました(回数制限の可能性)";
+  if (m.includes("401")) return "データの鍵が合いません";
+  if (m.includes("5")) return "サーバー側の不調";
+  return m || "原因不明";
+}
+
+// 売上記録は見るだけの画面なので、サーバーが読めないときは
+// 端末に残っている最後の内容を出す(集計が真っ白にならないように)
+const LS_REC_KEY = "bk_records_backup_v1";
+function saveLocalRecords() {
+  try { localStorage.setItem(LS_REC_KEY, JSON.stringify({ allSlips, deletedSlips, at: Date.now() })); } catch (e) {}
+}
+function loadLocalRecords() {
+  try {
+    const r = JSON.parse(localStorage.getItem(LS_REC_KEY) || "null");
+    return (r && Array.isArray(r.allSlips)) ? r : null;
+  } catch (e) { return null; }
+}
+
 async function loadData() {
   if (saving) return;
   setSync("syncing", "読み込み中...");
@@ -179,10 +204,22 @@ async function loadData() {
     const deletedIds = new Set(deletedSlips.map(x => x.id));
     allSlips = (fullRecord.slips || []).filter(s => s.status === "paid" && !deletedIds.has(s.id));
     loaded = true;
+    serverLoaded = true;
     lastSyncAt = Date.now();
+    saveLocalRecords();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
-    setSync("error", "読み込みエラー、時間をおいて再読み込みしてください");
+    setSync("error", "読み込みエラー(" + netWhy(e) + ")");
+    if (!loaded) {
+      const bk = loadLocalRecords();
+      if (bk) {
+        allSlips = bk.allSlips;
+        deletedSlips = bk.deletedSlips || [];
+        loaded = true;            // 表示はする
+        // ⚠️ serverLoaded は立てない。この状態で消去などの書き込みをさせないため
+        setSync("error", "この端末に残っていた記録を表示中(" + netWhy(e) + ")");
+      }
+    }
   }
   populateTableFilter();
   render();
@@ -192,7 +229,7 @@ async function loadData() {
 // 以前は「サーバーのお会計済みを全部捨てて、この端末が持っている分だけ書き戻す」形だったため、
 // 消去のタイミング次第で直前のお会計が消えることがあった。
 async function saveData() {
-  if (!loaded) { alert("お店のデータをまだ読み込めていません。通信を確認して「🔄 更新」を押してください。"); return; }
+  if (!serverLoaded) { alert("サーバーから読み込めていないため、消去できません。\n通信を確認して「🔄 更新」を押してください。"); return; }
   if (saving) return;
   saving = true;
   setSync("syncing", "保存中...");
@@ -212,8 +249,8 @@ async function saveData() {
     lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
-    setSync("error", "保存エラー、通信状況を確認してください");
-    alert("保存できませんでした。通信状況を確認して、もう一度お試しください。");
+    setSync("error", "保存エラー(" + netWhy(e) + ")");
+    alert("保存できませんでした。\n原因: " + netWhy(e) + "\n通信状況を確認して、もう一度お試しください。");
   } finally {
     saving = false;
   }

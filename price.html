@@ -113,7 +113,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>Bar KAMAKURA 値段確認<span class="ver-badge">v34</span></h1>
+  <h1>Bar KAMAKURA 値段確認<span class="ver-badge">v36</span></h1>
   <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率17.5%で自動計算)</p>
   <div id="load-alert" style="display:none"></div>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
@@ -327,9 +327,27 @@ function netWhy(e) {
   if (navigator.onLine === false) return "端末がオフラインです";
   const m = String((e && e.message) || e || "");
   if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
-  if (m.includes("429")) return "通信回数の上限です。しばらく待ってください";
-  if (m.includes("401") || m.includes("403")) return "データの鍵が合いません";
+  if (m.includes("429")) return "アクセスが集中しています";
+  if (m.includes("403")) return "サーバーに断られました(回数制限の可能性)";
+  if (m.includes("401")) return "データの鍵が合いません";
+  if (m.includes("5")) return "サーバー側の不調";
   return m || "原因不明";
+}
+
+// ---- 端末への控え(v36) ----
+// サーバーが一時的に断ってきても、登録した商品が消えないようにする
+const LS_MENU_KEY = "bk_menu_backup_v1";
+let hasBaseline = false;   // サーバーか端末のどちらかからメニューを読めているか
+let pendingSync = false;   // まだサーバーに送れていない変更があるか
+
+function saveLocalMenu() {
+  try { localStorage.setItem(LS_MENU_KEY, JSON.stringify({ menu, nextId, at: Date.now() })); } catch (e) {}
+}
+function loadLocalMenu() {
+  try {
+    const r = JSON.parse(localStorage.getItem(LS_MENU_KEY) || "null");
+    return (r && r.menu && Array.isArray(r.menu.liquors)) ? r : null;
+  } catch (e) { return null; }
 }
 
 function setLoadAlert(msg) {
@@ -347,23 +365,42 @@ async function loadData() {
     if (!res.ok) throw new Error("サーバー応答 " + res.status);
     const json = await res.json();
     fullRecord = json.record || {};
-    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
+    const serverMenu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
+    // ⚠️ まだ送れていない手元の登録を、読み込みで消してしまわないよう突き合わせる
+    menu = hasBaseline ? mergeMenu(serverMenu, menu) : serverMenu;
     analysisSlips = (fullRecord.slips || []).filter(x => x && x.status === "paid");
     if (!menu.cocktails) menu.cocktails = [];
     if (!menu.shots) menu.shots = [];
     const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails, ...menu.shots].map(i => i.id || 0);
     nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
     loaded = true;
-    setLoadAlert("");
-    setSync("", "同期済み(全員で共有中)");
+    hasBaseline = true;
+    saveLocalMenu();
+    if (pendingSync) { saveData(); } else { setLoadAlert(""); setSync("", "同期済み(全員で共有中)"); }
     migrateHotDrinkPrices();
   } catch (e) {
     // ⚠️ ここで loaded を立てない。立てると「空っぽの一覧」を保存してしまい、
     //    登録済みの商品が全部消える(v32で対策)
     setSync("error", "読み込みエラー(" + netWhy(e) + ")");
-    setLoadAlert("⚠️ <b>お店のデータを読み込めませんでした。</b><br>"
-      + "原因: <b>" + netWhy(e) + "</b><br>電波・Wi-Fiを確認してください。<br>"
-      + "<b>読み込めるまで登録・変更はしないでください。</b>（今登録しても保存されません）");
+    if (!hasBaseline) {
+      const bk = loadLocalMenu();
+      if (bk) {
+        // サーバーが読めない → 端末に残っている一覧で続けられるようにする
+        menu = bk.menu;
+        if (!menu.cocktails) menu.cocktails = [];
+        if (!menu.shots) menu.shots = [];
+        nextId = Math.max(nextId, bk.nextId || 1);
+        hasBaseline = true;
+        pendingSync = true;
+        setLoadAlert("📶 <b>サーバーにつながらないため、この端末に残っていた一覧を表示しています。</b><br>"
+          + "原因: <b>" + netWhy(e) + "</b><br>"
+          + "登録した内容は端末に残り、電波が戻れば自動で送られます。");
+      } else {
+        setLoadAlert("⚠️ <b>お店のデータを読み込めませんでした。</b><br>"
+          + "原因: <b>" + netWhy(e) + "</b><br>電波・Wi-Fiを確認してください。<br>"
+          + "<b>読み込めるまで登録・変更はしないでください。</b>（今登録しても保存されません）");
+      }
+    }
   }
   renderAll();
 }
@@ -406,13 +443,14 @@ function mergeMenu(serverMenu, localMenu) {
 let saving = false, saveQueued = false, saveTimer = null, saveFails = 0;
 
 async function saveData() {
-  // ⚠️ 読み込めていない状態で保存すると、登録済みの商品を空で上書きしてしまう
-  if (!loaded) {
+  // ⚠️ 土台が無い状態で保存すると、登録済みの商品を空で上書きしてしまう
+  if (!hasBaseline) {
     setSync("error", "まだ読み込めていないので保存しません");
     setLoadAlert("⚠️ <b>お店のデータを読み込めていないため、保存していません。</b><br>"
       + "電波・Wi-Fiを確認して読み込み直してから、もう一度登録してください。");
     return;
   }
+  saveLocalMenu();                 // まず端末に残す(ここは通信しないので失敗しない)
   if (saving) { saveQueued = true; return; }
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   saving = true;
@@ -432,14 +470,21 @@ async function saveData() {
     });
     if (!res.ok) throw new Error("書き込み失敗 " + res.status);
     saveFails = 0;
+    pendingSync = false;
+    saveLocalMenu();
     setLoadAlert("");
     setSync("", "同期済み(全員で共有中)");
     renderAll();
   } catch (e) {
     saveFails++;
-    const wait = Math.min(30, 3 * saveFails);
-    setSync("error", "保存エラー(" + netWhy(e) + ")");
-    setLoadAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗）。${wait}秒後に自動で再試行します。<br>この画面を閉じないでください。`);
+    pendingSync = true;
+    saveLocalMenu();                              // 端末には必ず残す
+    const why = netWhy(e);
+    const slow = why.includes("回数制限") || why.includes("集中");
+    const wait = slow ? Math.min(120, 20 * saveFails) : Math.min(30, 3 * saveFails);
+    setSync("error", "保存エラー(" + why + ")");
+    setLoadAlert(`📶 <b>まだサーバーに送れていません</b>（${saveFails}回・${why}）。<br>`
+      + `登録した内容は<b>この端末に残っています</b>。${wait}秒後に自動で送り直します。`);
     saveTimer = setTimeout(() => { saveTimer = null; saveData(); }, wait * 1000);
   } finally {
     saving = false;
@@ -751,6 +796,9 @@ function renderLiquor() {
 }
 
 document.getElementById("refresh-btn").addEventListener("click", () => { loadData(); });
+// 未送信が残っているときは自動で送り直す
+setInterval(() => { if (pendingSync && !saving && hasBaseline) saveData(); }, 45000);
+window.addEventListener("online", () => { if (pendingSync) saveData(); });
 
 // ==================== 商品分析 ====================
 // 伝票アプリでお会計した伝票から、商品ごとの出数と売上を数える。

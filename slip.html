@@ -53,6 +53,7 @@
   .ver-badge { display:inline-block; margin-left:10px; padding:3px 9px; border-radius:99px;
     background: var(--surface-3, #e8e8e8); color: var(--text-muted); font-size: 12px; font-weight:700;
     vertical-align: middle; letter-spacing:.04em; }
+  #save-alert.warn { background: #fff6e5; border-color: #d98b12; color: #7a4d04; }
   #save-alert {
     background: #fdecec; border: 2px solid var(--danger); color: #8a1c1c;
     border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; font-size: 15px; line-height: 1.5;
@@ -245,7 +246,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>Bar KAMAKURA 伝票<span class="ver-badge">v34</span></h1>
+  <h1>Bar KAMAKURA 伝票<span class="ver-badge">v36</span></h1>
   <p class="subtitle">卓を選んで新規伝票を作成、または対応中の伝票を開きます</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
   <div id="save-alert" style="display:none"></div>
@@ -427,7 +428,43 @@ function mergeSlips(serverSlips, localSlips, deletedIds) {
 }
 // 伝票を触ったら更新時刻を刻む(どちらが新しいか判断するため)
 function touchSlip(x) { if (x) x.updatedAt = new Date().toISOString(); }
-function saveSlip(x) { touchSlip(x); saveData(); }
+
+// ==================== 保存のしくみ(v36で作り直し) ====================
+// 考え方: 注文は「まず端末に保存」→「あとからサーバーへ送る」。
+// サーバー(jsonbin)が一時的に断ってきても、伝票は端末に残るので営業が止まらない。
+// 送れなかった分は自動で何度でも送り直す。
+
+const LS_KEY = "bk_slips_backup_v1";
+let hasBaseline = false;   // サーバーか端末のどちらかから伝票を読めているか
+let pendingSync = false;   // 端末にはあるが、まだサーバーに送れていない変更があるか
+let saveDebounce = null;
+
+// --- 端末への保存(ここは通信しないので、ほぼ絶対に失敗しない) ---
+function saveLocal() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({ slips, nextSlipId, nextItemId, at: Date.now() }));
+  } catch (e) {}
+}
+function loadLocal() {
+  try {
+    const r = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+    return (r && Array.isArray(r.slips)) ? r : null;
+  } catch (e) { return null; }
+}
+
+// 伝票を触ったときはこれを呼ぶ。端末に即保存し、サーバーへはまとめて送る。
+function saveSlip(x) {
+  touchSlip(x);
+  saveLocal();
+  pendingSync = true;
+  updateSyncUi();
+  queueSave();
+}
+// 続けて操作したときに何度も通信しないよう、少しまとめてから送る
+function queueSave() {
+  if (saveDebounce) clearTimeout(saveDebounce);
+  saveDebounce = setTimeout(() => { saveDebounce = null; saveData(); }, 1200);
+}
 
 function refreshIdCounters() {
   const slipIds = slips.map(x => x.id || 0);
@@ -436,6 +473,41 @@ function refreshIdCounters() {
   nextItemId = Math.max(nextItemId, (itemIds.length ? Math.max(...itemIds) : 0) + 1);
 }
 
+// ---- 何が起きたのかを日本語にする ----
+function netWhy(e) {
+  if (navigator.onLine === false) return "端末がオフラインです";
+  const m = String((e && e.message) || e || "");
+  if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
+  if (m.includes("429")) return "アクセスが集中しています";
+  if (m.includes("403")) return "サーバーに断られました(回数制限の可能性)";
+  if (m.includes("401")) return "データの鍵が合いません";
+  if (m.includes("5")) return "サーバー側の不調";
+  return m || "原因不明";
+}
+
+function setSaveAlert(msg, kind) {
+  const el = document.getElementById("save-alert");
+  if (!el) return;
+  if (!msg) { el.style.display = "none"; el.innerHTML = ""; el.className = ""; return; }
+  el.style.display = "";
+  el.className = kind === "warn" ? "warn" : "";
+  el.innerHTML = `<span>${msg}</span><button class="btn-ghost" onclick="saveData()">今すぐ送る</button>`;
+}
+
+// 未送信があるかどうかを画面に出す
+function updateSyncUi() {
+  if (pendingSync) {
+    setSync("syncing", "未送信あり(端末に保存済み)");
+    setSaveAlert("📶 <b>まだサーバーに送れていません。</b>"
+      + "伝票は<b>この端末に保存されている</b>ので、そのまま営業を続けて大丈夫です。"
+      + "電波が戻れば自動で送られます。", "warn");
+  } else {
+    setSync("", "同期済み(全員で共有中)");
+    setSaveAlert("");
+  }
+}
+
+// ==================== 読み込み ====================
 async function loadData() {
   if (saving) return;                  // 保存中に読み込むと書きかけが消えるので待つ
   setSync("syncing", "読み込み中...");
@@ -447,56 +519,58 @@ async function loadData() {
     menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
     if (!menu.shots) menu.shots = [];
     const deletedIds = new Set((fullRecord.deletedSlips || []).map(x => x.id));
-    // 読み込みでも突き合わせる。保存できていない手元の変更を消さないため
-    slips = loaded ? mergeSlips(fullRecord.slips || [], slips, deletedIds)
-                   : (fullRecord.slips || []);
+    // 手元に未送信の変更があるかもしれないので、必ず突き合わせる
+    slips = hasBaseline ? mergeSlips(fullRecord.slips || [], slips, deletedIds)
+                        : (fullRecord.slips || []);
     refreshIdCounters();
     loaded = true;
+    hasBaseline = true;
     lastSyncAt = Date.now();
-    setSync("", "同期済み(全員で共有中)");
+    saveLocal();
+    if (pendingSync) { queueSave(); }   // 送れていない分があるなら送る
+    else updateSyncUi();
   } catch (e) {
-    // ⚠️ ここで loaded を立てない(空のまま保存すると伝票が消える)
     setSync("error", "読み込みエラー(" + netWhy(e) + ")");
-    if (!loaded) setSaveAlert("⚠️ <b>お店のデータを読み込めませんでした。</b> 電波・Wi-Fiを確認して「🔄 更新」を押してください。読み込めるまで伝票を作らないでください。");
+    if (!hasBaseline) {
+      // サーバーが読めない → 端末に残っている分で営業を続けられるようにする
+      const bk = loadLocal();
+      if (bk) {
+        slips = bk.slips;
+        nextSlipId = Math.max(nextSlipId, bk.nextSlipId || 1);
+        nextItemId = Math.max(nextItemId, bk.nextItemId || 1);
+        refreshIdCounters();
+        hasBaseline = true;
+        pendingSync = true;
+        setSaveAlert("📶 <b>サーバーにつながらないため、この端末に保存されていた伝票を表示しています。</b>"
+          + "（" + netWhy(e) + "）このまま営業を続けて大丈夫です。電波が戻れば自動で送られます。", "warn");
+      } else {
+        setSaveAlert("⚠️ <b>お店のデータを読み込めませんでした。</b>（" + netWhy(e) + "）"
+          + "電波・Wi-Fiを確認して「🔄 更新」を押してください。");
+      }
+    } else {
+      updateSyncUi();
+    }
   }
   renderTableGrid();
   if (currentSlipId) renderSlipView();
 }
 
-// ---- 保存 ----
-// 失敗したら黙って終わらせず、画面に出したうえで自動で再試行する。
-// お会計が保存されないまま閉店するのが一番こわいため。
+// ==================== サーバーへ送る ====================
 let saving = false;
 let saveQueued = false;
 let saveTimer = null;
 let saveFails = 0;
 
-function netWhy(e) {
-  if (navigator.onLine === false) return "端末がオフラインです";
-  const m = String((e && e.message) || e || "");
-  if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
-  if (m.includes("429")) return "通信回数の上限です。しばらく待ってください";
-  if (m.includes("401") || m.includes("403")) return "データの鍵が合いません";
-  return m || "原因不明";
-}
-
-function setSaveAlert(msg) {
-  const el = document.getElementById("save-alert");
-  if (!el) return;
-  if (!msg) { el.style.display = "none"; el.innerHTML = ""; return; }
-  el.style.display = "";
-  el.innerHTML = `<span>${msg}</span><button class="btn-ghost" onclick="saveData()">今すぐ再試行</button>`;
-}
-
 async function saveData() {
-  // ⚠️ 読み込めていない状態で保存すると、他の伝票を空で上書きしてしまう
-  if (!loaded) {
-    setSync("error", "まだ読み込めていないので保存しません");
-    setSaveAlert("⚠️ <b>お店のデータを読み込めていないため、保存していません。</b> 電波・Wi-Fiを確認して「🔄 更新」を押してください。");
+  // 土台(サーバーまたは端末の控え)が無いときだけ送らない。空で上書きしないため
+  if (!hasBaseline) {
+    setSync("error", "まだ読み込めていないので送りません");
+    setSaveAlert("⚠️ <b>お店のデータを読み込めていないため、送信していません。</b> 「🔄 更新」を押してください。");
     return;
   }
   if (saving) { saveQueued = true; return; }      // 二重送信を防ぐ
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = null; }
   saving = true;
   setSync("syncing", "保存中...");
   try {
@@ -514,16 +588,24 @@ async function saveData() {
     });
     if (!res.ok) throw new Error("書き込み失敗 " + res.status);
     saveFails = 0;
+    pendingSync = false;
     lastSyncAt = Date.now();
-    setSaveAlert("");
-    setSync("", "同期済み(全員で共有中)");
+    saveLocal();
+    updateSyncUi();
     renderTableGrid();
     if (currentSlipId) renderSlipView();
   } catch (e) {
     saveFails++;
-    const wait = Math.min(30, 3 * saveFails);     // 3秒 → 6秒 → ... 最大30秒
-    setSync("error", "保存エラー(" + netWhy(e) + ")");
-    setSaveAlert(`⚠️ <b>まだ保存できていません</b>（${saveFails}回失敗・${netWhy(e)}）。${wait}秒後に自動で再試行します。この画面を閉じないでください。`);
+    pendingSync = true;
+    saveLocal();                                  // 端末には必ず残す
+    // 回数制限のときは長めに待つ(短い間隔で叩くと余計に断られるため)
+    const why = netWhy(e);
+    const slow = why.includes("回数制限") || why.includes("集中");
+    const wait = slow ? Math.min(120, 20 * saveFails) : Math.min(30, 3 * saveFails);
+    setSync("error", "保存エラー(" + why + ")");
+    setSaveAlert(`📶 <b>まだサーバーに送れていません</b>（${saveFails}回・${why}）。`
+      + `伝票は<b>この端末に保存されています</b>ので、そのまま営業を続けて大丈夫です。`
+      + `${wait}秒後に自動で送り直します。`, "warn");
     saveTimer = setTimeout(() => { saveTimer = null; saveData(); }, wait * 1000);
   } finally {
     saving = false;
@@ -1893,6 +1975,10 @@ function uiBusy() {
 }
 // 20秒ごとだとjsonbinへの通信が多くなりすぎるので60秒。画面が隠れている間は止める
 setInterval(() => { if (!offscreen() && !uiBusy()) loadData(); }, 60000);
+// 未送信が残っているときは、画面を見ていなくても送り直しを試し続ける
+setInterval(() => { if (pendingSync && !saving && hasBaseline) saveData(); }, 45000);
+// 電波が戻った瞬間に送る
+window.addEventListener("online", () => { if (pendingSync) saveData(); });
 // 画面に戻ってきたとき(別アプリから切り替えた・スリープ解除)はすぐ取り込む
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !uiBusy()) loadData(); });
 window.addEventListener("focus", () => { if (!uiBusy() && Date.now() - lastSyncAt > 5000) loadData(); });
