@@ -93,7 +93,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>売上記録（Bar KAMAKURA）<span class="ver-badge">v36</span></h1>
+  <h1>売上記録（Bar KAMAKURA）<span class="ver-badge">v37</span></h1>
   <p class="subtitle">お会計済の伝票を自動で記録します(半永久保存・明細つき)</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
   <div style="margin-bottom:14px; display:flex; gap:8px; flex-wrap:wrap;">
@@ -139,9 +139,53 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 <div id="detail-modal"></div>
 
 <script>
-const BIN_ID = "6a843737da38895dfef24f99";
-const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
-const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+// ==================== Supabase 接続（v37） ====================
+// jsonbin（100KBの上限で営業が止まった）から乗り換え。
+// 変わった行だけを送り、必要な行だけを読む。
+const SB_URL = "https://ygoenedypmqclgbcsgmo.supabase.co";
+const SB_KEY = "sb_publishable_0MKfDXkADPD2w7-Ewtz6MA_ineWsTMK";
+const SB_H = { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" };
+
+async function sbGet(path) {
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: SB_H, cache: "no-store" });
+  if (!r.ok) throw new Error("読み込み失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+  return r.json();
+}
+async function sbUpsert(table, rows, conflict) {
+  if (!rows || !rows.length) return;
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?on_conflict=${conflict || "id"}`, {
+    method: "POST",
+    headers: { ...SB_H, Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(rows)
+  });
+  if (!r.ok) throw new Error("書き込み失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+}
+async function sbPatch(table, filter, body) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
+    method: "PATCH", headers: { ...SB_H, Prefer: "return=minimal" }, body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error("更新失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+}
+// 端末をまたいでぶつからないID
+// 時刻(ミリ秒) × 1000 ＋ 端末番号(0〜9) × 100 ＋ 連番(0〜99)
+// → 同じミリ秒に同じ端末で100件作っても被らない。端末は10台まで区別できる。
+// （Date.now()*1000 は約1.8e15。JSが正確に扱える上限 9.0e15 の内側なので安全）
+const BK_DEVICE_NO = (() => {
+  try {
+    let d = localStorage.getItem("bk_device_no");
+    if (d === null) { d = String(Math.floor(Math.random() * 10)); localStorage.setItem("bk_device_no", d); }
+    return Number(d) % 10;
+  } catch (e) { return Math.floor(Math.random() * 10); }
+})();
+let _bkLastMs = 0, _bkSeq = 0;
+function newId() {
+  let t = Date.now();
+  if (t <= _bkLastMs) {
+    _bkSeq++;
+    if (_bkSeq >= 100) { _bkLastMs = _bkLastMs + 1; _bkSeq = 0; }   // 時計を1ms進める
+  } else { _bkLastMs = t; _bkSeq = 0; }
+  return _bkLastMs * 1000 + BK_DEVICE_NO * 100 + _bkSeq;
+}
 const CHARGE_PER_PERSON = 500;
 const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 // ---- 営業日の区切り ----
@@ -150,7 +194,7 @@ const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 // 区切りの時刻を変えたいときはこの数字を書き換えてください。
 const DAY_START_HOUR = 17;
 
-let fullRecord = {};
+
 let allSlips = [];
 let deletedSlips = [];
 let loaded = false;        // 画面に出してよいか
@@ -192,17 +236,37 @@ function loadLocalRecords() {
   } catch (e) { return null; }
 }
 
+// ---- 行 → 画面で使う形 ----
+function rowToItemR(i) {
+  const it = { id: Number(i.id), name: i.name, cat: i.cat, price: Number(i.price || 0),
+    cancelled: !!i.cancelled, served: !!i.served, orderedAt: i.ordered_at, mods: null };
+  if (i.nomi) it.nomi = true;
+  if (i.mixer || i.mixer_name || i.style) it.mods = { mixer: Number(i.mixer || 0), mixerName: i.mixer_name || null, style: i.style || null };
+  return it;
+}
+function rowToSlipR(r) {
+  const s = { id: Number(r.id), table: r.table_name, type: r.type || "", count: Number(r.guest_count || 1),
+    note: r.note || "", status: r.status, createdAt: r.created_at, paidAt: r.paid_at,
+    items: (r.slip_items || []).map(rowToItemR).sort((a, b) => a.id - b.id) };
+  if (r.rebook) s.rebook = true;
+  if (r.nomi_count != null) s.nomihodai = { count: Number(r.nomi_count), startAt: r.nomi_start_at || null, extends: Number(r.nomi_extends || 0) };
+  if (r.payment_method) s.payment = { method: r.payment_method, note: r.payment_note || "" };
+  if (r.deleted_at) { s.deletedAt = r.deleted_at; s.deleteReason = r.delete_reason || ""; }
+  return s;
+}
+
+// お会計済みの伝票を取りに行く。過去の全部ではなく、必要なぶんだけ。
 async function loadData() {
   if (saving) return;
   setSync("syncing", "読み込み中...");
   try {
-    const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res.ok) throw new Error("サーバー応答 " + res.status);
-    const json = await res.json();
-    fullRecord = json.record || {};
-    deletedSlips = fullRecord.deletedSlips || [];
-    const deletedIds = new Set(deletedSlips.map(x => x.id));
-    allSlips = (fullRecord.slips || []).filter(s => s.status === "paid" && !deletedIds.has(s.id));
+    const SEL = "select=*,slip_items(*)&status=eq.paid&order=paid_at.desc";
+    const [live, trash] = await Promise.all([
+      sbGet(`slips?${SEL}&deleted_at=is.null&limit=2000`),
+      sbGet(`slips?${SEL}&deleted_at=not.is.null&limit=500`)
+    ]);
+    allSlips = live.map(rowToSlipR);
+    deletedSlips = trash.map(rowToSlipR);
     loaded = true;
     serverLoaded = true;
     lastSyncAt = Date.now();
@@ -225,27 +289,15 @@ async function loadData() {
   render();
 }
 
-// 保存の直前にサーバーを読み直し、他のiPadがその間にお会計した伝票を巻き込まないようにする。
-// 以前は「サーバーのお会計済みを全部捨てて、この端末が持っている分だけ書き戻す」形だったため、
-// 消去のタイミング次第で直前のお会計が消えることがあった。
-async function saveData() {
+// 消去は「行を消す」のではなく deleted_at に日時を入れるだけ。
+// 行が残るので、あとから中身を確認できるし、誤って完全に失うこともない。
+async function saveData(slipId, patch) {
   if (!serverLoaded) { alert("サーバーから読み込めていないため、消去できません。\n通信を確認して「🔄 更新」を押してください。"); return; }
   if (saving) return;
   saving = true;
   setSync("syncing", "保存中...");
   try {
-    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("読み直し失敗 " + res0.status);
-    fullRecord = (await res0.json()).record || {};
-    const deletedIds = new Set(deletedSlips.map(x => x.id));
-    const keep = (fullRecord.slips || []).filter(x => x && !deletedIds.has(x.id));
-    const known = new Set(keep.map(x => x.id));
-    // この端末にしか無いお会計済みの伝票があれば足しておく
-    allSlips.forEach(x => { if (x && !known.has(x.id) && !deletedIds.has(x.id)) keep.push(x); });
-    fullRecord.slips = keep;
-    fullRecord.deletedSlips = deletedSlips;
-    const res = await fetch(BASE_URL, { method: "PUT", headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY }, body: JSON.stringify(fullRecord) });
-    if (!res.ok) throw new Error("書き込み失敗 " + res.status);
+    await sbPatch("slips", `id=eq.${slipId}`, patch);
     lastSyncAt = Date.now();
     setSync("", "同期済み(全員で共有中)");
   } catch (e) {
@@ -262,7 +314,7 @@ document.getElementById("refresh-btn").addEventListener("click", () => { loadDat
 // ---- 自動更新 ----
 // 伝票アプリでお会計したら、こちらを触らなくても最大20秒で反映される
 // 画面に出ていないとき(タブが裏 / まとめアプリで別タブを見ている)は通信しない。
-// jsonbinへの通信回数を減らすため。
+// 通信回数を減らすため。
 function offscreen() {
   if (document.hidden) return true;
   if (!document.body || document.body.clientWidth === 0) return true;  // 非表示のiframe
@@ -273,7 +325,7 @@ function recBusy() {
   if (document.querySelector("#detail-modal .modal-backdrop")) return true;  // 明細を見ている最中
   return false;
 }
-// 60秒ごと。画面が隠れている間は通信しない(jsonbinの回数を節約)
+// 60秒ごと。画面が隠れている間は通信しない
 setInterval(() => { if (!offscreen() && !recBusy()) loadData(); }, 60000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !recBusy()) loadData(); });
 window.addEventListener("focus", () => { if (!recBusy() && Date.now() - lastSyncAt > 5000) loadData(); });
@@ -506,14 +558,15 @@ function confirmDeleteSlip(slipId) {
   const idx = allSlips.findIndex(s => s.id === slipId);
   if (idx === -1) return;
   const slip = allSlips[idx];
-  slip.deletedAt = new Date().toISOString();
+  const when = new Date().toISOString();
+  slip.deletedAt = when;
   slip.deleteReason = reason;
-  deletedSlips.push(slip);
+  deletedSlips.unshift(slip);
   allSlips.splice(idx, 1);
   closeDetail();
   populateTableFilter();
   render();
-  saveData();
+  saveData(slipId, { deleted_at: when, delete_reason: reason });
 }
 
 function showDetail(slipId, fromTrash) {

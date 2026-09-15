@@ -246,7 +246,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>Bar KAMAKURA 伝票<span class="ver-badge">v36</span></h1>
+  <h1>Bar KAMAKURA 伝票<span class="ver-badge">v37</span></h1>
   <p class="subtitle">卓を選んで新規伝票を作成、または対応中の伝票を開きます</p>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button class="btn-ghost" id="refresh-btn" style="margin-left:8px;">🔄 更新</button></div>
   <div id="save-alert" style="display:none"></div>
@@ -325,10 +325,53 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 <div id="modifier-modal"></div>
 
 <script>
-// ---- shared jsonbin.io backend ----
-const BIN_ID = "6a843737da38895dfef24f99";
-const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
-const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+// ==================== Supabase 接続（v37） ====================
+// jsonbin（100KBの上限で営業が止まった）から乗り換え。
+// 変わった行だけを送り、必要な行だけを読む。
+const SB_URL = "https://ygoenedypmqclgbcsgmo.supabase.co";
+const SB_KEY = "sb_publishable_0MKfDXkADPD2w7-Ewtz6MA_ineWsTMK";
+const SB_H = { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" };
+
+async function sbGet(path) {
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: SB_H, cache: "no-store" });
+  if (!r.ok) throw new Error("読み込み失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+  return r.json();
+}
+async function sbUpsert(table, rows, conflict) {
+  if (!rows || !rows.length) return;
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?on_conflict=${conflict || "id"}`, {
+    method: "POST",
+    headers: { ...SB_H, Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(rows)
+  });
+  if (!r.ok) throw new Error("書き込み失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+}
+async function sbPatch(table, filter, body) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
+    method: "PATCH", headers: { ...SB_H, Prefer: "return=minimal" }, body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error("更新失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+}
+// 端末をまたいでぶつからないID
+// 時刻(ミリ秒) × 1000 ＋ 端末番号(0〜9) × 100 ＋ 連番(0〜99)
+// → 同じミリ秒に同じ端末で100件作っても被らない。端末は10台まで区別できる。
+// （Date.now()*1000 は約1.8e15。JSが正確に扱える上限 9.0e15 の内側なので安全）
+const BK_DEVICE_NO = (() => {
+  try {
+    let d = localStorage.getItem("bk_device_no");
+    if (d === null) { d = String(Math.floor(Math.random() * 10)); localStorage.setItem("bk_device_no", d); }
+    return Number(d) % 10;
+  } catch (e) { return Math.floor(Math.random() * 10); }
+})();
+let _bkLastMs = 0, _bkSeq = 0;
+function newId() {
+  let t = Date.now();
+  if (t <= _bkLastMs) {
+    _bkSeq++;
+    if (_bkSeq >= 100) { _bkLastMs = _bkLastMs + 1; _bkSeq = 0; }   // 時計を1ms進める
+  } else { _bkLastMs = t; _bkSeq = 0; }
+  return _bkLastMs * 1000 + BK_DEVICE_NO * 100 + _bkSeq;
+}
 
 const TABLES = ["C1","C2","C3","C4","C5","C6","T1","T2","T3","T4"];
 const CHARGE_PER_PERSON = 500;
@@ -373,11 +416,11 @@ function groupByCategory(items, categoryOrder) {
   return orderedCats.filter(c => groups[c]).map(c => ({ category: c, items: groups[c] }));
 }
 
-let fullRecord = {};
 let menu = { dishes: [], liquors: [], bottles: [], shots: [] };
 let slips = [];
-let nextSlipId = 1;
-let nextItemId = 1;
+// v37: IDは時刻から作る。複数のiPadで同時に伝票を作ってもぶつからない
+function nextSlipId_() { return newId(); }
+function nextItemId_() { return newId(); }
 let loaded = false;
 let lastSyncAt = 0;      // 最後にサーバーと同期できた時刻
 
@@ -400,49 +443,71 @@ function setSync(state, text) {
   label.textContent = text;
 }
 
-// ---- 伝票の突き合わせ ----
-// 同じ伝票の「サーバー側」と「この端末側」を比べて、新しいほうを残す。
-// 昔は fullRecord.slips = slips で丸ごと上書きしていたため、
-// 別のiPadでお会計した直後にこの端末が保存すると、その会計が消えていた。
-// (消えた伝票をもう一度会計し直すので、売上記録の時刻がずれていた)
-function slipStamp(x) {
-  if (!x) return 0;
-  return Date.parse(x.updatedAt || x.paidAt || x.createdAt || 0) || 0;
-}
-function newerSlip(a, b) {
-  // お会計済みは絶対に「未会計」へ戻さない
-  if (a.status === "paid" && b.status !== "paid") return a;
-  if (b.status === "paid" && a.status !== "paid") return b;
-  return slipStamp(b) >= slipStamp(a) ? b : a;
-}
-function mergeSlips(serverSlips, localSlips, deletedIds) {
-  const map = new Map();
-  (serverSlips || []).forEach(x => { if (x && x.id != null && !deletedIds.has(x.id)) map.set(x.id, x); });
-  (localSlips || []).forEach(l => {
-    if (!l || l.id == null) return;
-    if (deletedIds.has(l.id)) return;            // 売上記録で消した伝票は復活させない
-    const srv = map.get(l.id);
-    map.set(l.id, srv ? newerSlip(srv, l) : l);  // srvが無い = この端末で作った伝票
-  });
-  return [...map.values()];
-}
-// 伝票を触ったら更新時刻を刻む(どちらが新しいか判断するため)
-function touchSlip(x) { if (x) x.updatedAt = new Date().toISOString(); }
+// ==================== 保存のしくみ（v37・Supabase） ====================
+// 考え方はv36と同じ「まず端末に保存 → あとからサーバーへ送る」。
+// 違うのは、送るのが【変わった伝票だけ】になったこと。
+// 以前は注文1つ足すたびに店の全データを送り直していて、100KBの上限で止まった。
 
-// ==================== 保存のしくみ(v36で作り直し) ====================
-// 考え方: 注文は「まず端末に保存」→「あとからサーバーへ送る」。
-// サーバー(jsonbin)が一時的に断ってきても、伝票は端末に残るので営業が止まらない。
-// 送れなかった分は自動で何度でも送り直す。
-
-const LS_KEY = "bk_slips_backup_v1";
+const LS_KEY = "bk_slips_backup_v2";
 let hasBaseline = false;   // サーバーか端末のどちらかから伝票を読めているか
-let pendingSync = false;   // 端末にはあるが、まだサーバーに送れていない変更があるか
+let pendingSync = false;   // まだ送れていない変更があるか
 let saveDebounce = null;
+let dirtyIds = new Set();  // 変更があった伝票のid（これだけ送る）
 
-// --- 端末への保存(ここは通信しないので、ほぼ絶対に失敗しない) ---
+// ---- 行 ⇔ 画面で使う形 の変換 ----
+function rowToItem(i) {
+  const it = {
+    id: Number(i.id), name: i.name, cat: i.cat, price: Number(i.price || 0),
+    cancelled: !!i.cancelled, served: !!i.served, orderedAt: i.ordered_at, mods: null
+  };
+  if (i.served_at) it.servedAt = i.served_at;
+  if (i.nomi) it.nomi = true;
+  if (i.custom) it.custom = true;
+  if (i.mixer || i.mixer_name || i.style) {
+    it.mods = { mixer: Number(i.mixer || 0), mixerName: i.mixer_name || null, style: i.style || null };
+  }
+  return it;
+}
+function rowToSlip(r) {
+  const s = {
+    id: Number(r.id), table: r.table_name, type: r.type || "", count: Number(r.guest_count || 1),
+    note: r.note || "", status: r.status || "open",
+    createdAt: r.created_at, updatedAt: r.updated_at,
+    items: (r.slip_items || []).map(rowToItem).sort((a, b) => a.id - b.id)
+  };
+  if (r.paid_at) s.paidAt = r.paid_at;
+  if (r.rebook) s.rebook = true;
+  if (r.nomi_count != null) s.nomihodai = { count: Number(r.nomi_count), startAt: r.nomi_start_at || null, extends: Number(r.nomi_extends || 0) };
+  if (r.payment_method) s.payment = { method: r.payment_method, note: r.payment_note || "" };
+  return s;
+}
+function slipToRow(s) {
+  return {
+    id: s.id, table_name: s.table, type: s.type || null, guest_count: s.count || 1,
+    note: s.note || null, rebook: !!s.rebook, status: s.status || "open",
+    nomi_count: s.nomihodai ? s.nomihodai.count : null,
+    nomi_start_at: s.nomihodai ? (s.nomihodai.startAt || null) : null,
+    nomi_extends: s.nomihodai ? (s.nomihodai.extends || 0) : 0,
+    payment_method: s.payment ? s.payment.method : null,
+    payment_note: s.payment ? (s.payment.note || null) : null,
+    created_at: s.createdAt, paid_at: s.paidAt || null
+  };
+}
+function itemToRow(i, slipId) {
+  return {
+    id: i.id, slip_id: slipId, name: i.name, cat: i.cat || null, price: i.price || 0,
+    mixer: (i.mods && i.mods.mixer) || 0,
+    mixer_name: (i.mods && i.mods.mixerName) || null,
+    style: (i.mods && i.mods.style) || null,
+    nomi: !!i.nomi, custom: !!i.custom, cancelled: !!i.cancelled, served: !!i.served,
+    ordered_at: i.orderedAt, served_at: i.servedAt || null
+  };
+}
+
+// ---- 端末への控え（通信しないので失敗しない） ----
 function saveLocal() {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ slips, nextSlipId, nextItemId, at: Date.now() }));
+    localStorage.setItem(LS_KEY, JSON.stringify({ slips, dirty: [...dirtyIds], at: Date.now() }));
   } catch (e) {}
 }
 function loadLocal() {
@@ -452,36 +517,30 @@ function loadLocal() {
   } catch (e) { return null; }
 }
 
-// 伝票を触ったときはこれを呼ぶ。端末に即保存し、サーバーへはまとめて送る。
+function touchSlip(x) { if (x) x.updatedAt = new Date().toISOString(); }
 function saveSlip(x) {
+  if (!x) return;
   touchSlip(x);
+  dirtyIds.add(x.id);
   saveLocal();
   pendingSync = true;
   updateSyncUi();
   queueSave();
 }
-// 続けて操作したときに何度も通信しないよう、少しまとめてから送る
 function queueSave() {
   if (saveDebounce) clearTimeout(saveDebounce);
   saveDebounce = setTimeout(() => { saveDebounce = null; saveData(); }, 1200);
 }
 
-function refreshIdCounters() {
-  const slipIds = slips.map(x => x.id || 0);
-  nextSlipId = Math.max(nextSlipId, (slipIds.length ? Math.max(...slipIds) : 0) + 1);
-  const itemIds = slips.flatMap(x => (x.items||[]).map(i => i.id || 0));
-  nextItemId = Math.max(nextItemId, (itemIds.length ? Math.max(...itemIds) : 0) + 1);
-}
+function refreshIdCounters() { /* v37はIDを時刻から作るので不要 */ }
 
-// ---- 何が起きたのかを日本語にする ----
 function netWhy(e) {
   if (navigator.onLine === false) return "端末がオフラインです";
   const m = String((e && e.message) || e || "");
   if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("Load failed")) return "ネットにつながりません";
   if (m.includes("429")) return "アクセスが集中しています";
-  if (m.includes("403")) return "サーバーに断られました(回数制限の可能性)";
-  if (m.includes("401")) return "データの鍵が合いません";
-  if (m.includes("5")) return "サーバー側の不調";
+  if (m.includes("401") || m.includes("403")) return "つなぐ鍵が合いません";
+  if (m.includes(" 5")) return "サーバー側の不調";
   return m || "原因不明";
 }
 
@@ -493,11 +552,9 @@ function setSaveAlert(msg, kind) {
   el.className = kind === "warn" ? "warn" : "";
   el.innerHTML = `<span>${msg}</span><button class="btn-ghost" onclick="saveData()">今すぐ送る</button>`;
 }
-
-// 未送信があるかどうかを画面に出す
 function updateSyncUi() {
   if (pendingSync) {
-    setSync("syncing", "未送信あり(端末に保存済み)");
+    setSync("syncing", `未送信 ${dirtyIds.size}件(端末に保存済み)`);
     setSaveAlert("📶 <b>まだサーバーに送れていません。</b>"
       + "伝票は<b>この端末に保存されている</b>ので、そのまま営業を続けて大丈夫です。"
       + "電波が戻れば自動で送られます。", "warn");
@@ -508,99 +565,92 @@ function updateSyncUi() {
 }
 
 // ==================== 読み込み ====================
+// 対応中の伝票と商品だけを取りに行く。過去の伝票は読まない（速い・軽い）
 async function loadData() {
-  if (saving) return;                  // 保存中に読み込むと書きかけが消えるので待つ
+  if (saving) return;
   setSync("syncing", "読み込み中...");
   try {
-    const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res.ok) throw new Error("サーバー応答 " + res.status);
-    const json = await res.json();
-    fullRecord = json.record || {};
-    menu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [] };
-    if (!menu.shots) menu.shots = [];
-    const deletedIds = new Set((fullRecord.deletedSlips || []).map(x => x.id));
-    // 手元に未送信の変更があるかもしれないので、必ず突き合わせる
-    slips = hasBaseline ? mergeSlips(fullRecord.slips || [], slips, deletedIds)
-                        : (fullRecord.slips || []);
-    refreshIdCounters();
-    loaded = true;
-    hasBaseline = true;
-    lastSyncAt = Date.now();
+    const [menuRows, slipRows] = await Promise.all([
+      sbGet("menu_items?select=*&deleted=eq.false"),
+      sbGet("slips?select=*,slip_items(*)&status=eq.open&deleted_at=is.null&order=created_at")
+    ]);
+    menu = { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
+    const BUCKET = { dish: "dishes", liquor: "liquors", bottle: "bottles", cocktail: "cocktails", shot: "shots" };
+    menuRows.forEach(m => {
+      const b = BUCKET[m.kind]; if (!b) return;
+      const o = { id: Number(m.id), name: m.name, category: m.category || undefined };
+      if (m.kind === "liquor") { o.sellPrice = Number(m.price || 0); if (m.fixed_price) o.fixedPrice = true; }
+      else o.price = Number(m.price || 0);
+      menu[b].push(o);
+    });
+    const fresh = slipRows.map(rowToSlip);
+    // 未送信の変更が読み込みで消えないように、手元が新しい伝票は残す
+    if (hasBaseline && dirtyIds.size) {
+      const map = new Map(fresh.map(x => [x.id, x]));
+      slips.forEach(l => { if (dirtyIds.has(l.id)) map.set(l.id, l); });
+      slips = [...map.values()];
+    } else {
+      slips = fresh;
+    }
+    loaded = true; hasBaseline = true; lastSyncAt = Date.now();
     saveLocal();
-    if (pendingSync) { queueSave(); }   // 送れていない分があるなら送る
-    else updateSyncUi();
+    if (pendingSync) queueSave(); else updateSyncUi();
   } catch (e) {
     setSync("error", "読み込みエラー(" + netWhy(e) + ")");
     if (!hasBaseline) {
-      // サーバーが読めない → 端末に残っている分で営業を続けられるようにする
       const bk = loadLocal();
       if (bk) {
         slips = bk.slips;
-        nextSlipId = Math.max(nextSlipId, bk.nextSlipId || 1);
-        nextItemId = Math.max(nextItemId, bk.nextItemId || 1);
-        refreshIdCounters();
+        dirtyIds = new Set(bk.dirty || []);
         hasBaseline = true;
-        pendingSync = true;
+        pendingSync = dirtyIds.size > 0;
         setSaveAlert("📶 <b>サーバーにつながらないため、この端末に保存されていた伝票を表示しています。</b>"
           + "（" + netWhy(e) + "）このまま営業を続けて大丈夫です。電波が戻れば自動で送られます。", "warn");
       } else {
         setSaveAlert("⚠️ <b>お店のデータを読み込めませんでした。</b>（" + netWhy(e) + "）"
           + "電波・Wi-Fiを確認して「🔄 更新」を押してください。");
       }
-    } else {
-      updateSyncUi();
-    }
+    } else { updateSyncUi(); }
   }
   renderTableGrid();
   if (currentSlipId) renderSlipView();
 }
 
 // ==================== サーバーへ送る ====================
-let saving = false;
-let saveQueued = false;
-let saveTimer = null;
-let saveFails = 0;
+let saving = false, saveQueued = false, saveTimer = null, saveFails = 0;
 
 async function saveData() {
-  // 土台(サーバーまたは端末の控え)が無いときだけ送らない。空で上書きしないため
   if (!hasBaseline) {
     setSync("error", "まだ読み込めていないので送りません");
     setSaveAlert("⚠️ <b>お店のデータを読み込めていないため、送信していません。</b> 「🔄 更新」を押してください。");
     return;
   }
-  if (saving) { saveQueued = true; return; }      // 二重送信を防ぐ
+  if (saving) { saveQueued = true; return; }
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = null; }
+  if (!dirtyIds.size) { pendingSync = false; updateSyncUi(); return; }
   saving = true;
   setSync("syncing", "保存中...");
+  const sending = [...dirtyIds];
   try {
-    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("読み直し失敗 " + res0.status);
-    fullRecord = (await res0.json()).record || {};
-    const deletedIds = new Set((fullRecord.deletedSlips || []).map(x => x.id));
-    slips = mergeSlips(fullRecord.slips || [], slips, deletedIds);
-    refreshIdCounters();
-    fullRecord.slips = slips;
-    const res = await fetch(BASE_URL, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
-      body: JSON.stringify(fullRecord)
-    });
-    if (!res.ok) throw new Error("書き込み失敗 " + res.status);
+    const targets = slips.filter(x => sending.includes(x.id));
+    // 伝票の行を先に（注文が伝票を参照しているため）
+    await sbUpsert("slips", targets.map(slipToRow), "id");
+    const itemRows = [];
+    targets.forEach(s => (s.items || []).forEach(i => itemRows.push(itemToRow(i, s.id))));
+    await sbUpsert("slip_items", itemRows, "id");
+    sending.forEach(id => dirtyIds.delete(id));
     saveFails = 0;
-    pendingSync = false;
+    pendingSync = dirtyIds.size > 0;
     lastSyncAt = Date.now();
     saveLocal();
     updateSyncUi();
-    renderTableGrid();
-    if (currentSlipId) renderSlipView();
   } catch (e) {
     saveFails++;
     pendingSync = true;
-    saveLocal();                                  // 端末には必ず残す
-    // 回数制限のときは長めに待つ(短い間隔で叩くと余計に断られるため)
+    saveLocal();
     const why = netWhy(e);
-    const slow = why.includes("回数制限") || why.includes("集中");
+    const slow = why.includes("集中") || why.includes("鍵");
     const wait = slow ? Math.min(120, 20 * saveFails) : Math.min(30, 3 * saveFails);
     setSync("error", "保存エラー(" + why + ")");
     setSaveAlert(`📶 <b>まだサーバーに送れていません</b>（${saveFails}回・${why}）。`
@@ -925,7 +975,7 @@ document.getElementById("new-create-btn").addEventListener("click", () => {
   if (nameMode && openSlipFor(tableName)) { showToast("その名前の伝票はすでに対応中です"); return; }
   currentTable = tableName;
   const slip = {
-    id: nextSlipId++,
+    id: nextSlipId_(),
     table: tableName,
     type: newSlipDraft.type,
     count: newSlipDraft.count,
@@ -1402,7 +1452,7 @@ function confirmStaged() {
     const n = i.qty || 1;
     for (let k = 0; k < n; k++) {
       const { qty, ...one } = i;
-      slip.items.push({ ...one, id: nextItemId++, served: false });
+      slip.items.push({ ...one, id: nextItemId_(), served: false });
     }
   });
   closeItemPicker();
@@ -1666,7 +1716,7 @@ function stageOrderItem(id, cat, mods) {
   if (!source) return;
   const isNomi = pickerMode === "nomi";
   const price = isNomi ? 0 : (cat === "liquor" ? source.sellPrice : source.price);
-  const entry = { id: nextItemId++, name: source.name, cat, price, mods: mods || null, cancelled: false, orderedAt: new Date().toISOString() };
+  const entry = { id: nextItemId_(), name: source.name, cat, price, mods: mods || null, cancelled: false, orderedAt: new Date().toISOString() };
   if (isNomi) entry.nomi = true;
   addStaged(entry, 1);
   const modLabel = mods && (mods.style || mods.mixer || mods.mixerName) ? `(${[mixerLabel(mods), mods.style || ""].filter(Boolean).join(" / ")})` : "";
@@ -1706,7 +1756,7 @@ function addMixerOnly(id) {
   const m = mixerOnlyList().find(x => x.id === id);
   if (!m) return;
   addStaged({
-    id: nextItemId++, name: mixerOnlyName(m.name), cat: "liquor", price: m.extra,
+    id: nextItemId_(), name: mixerOnlyName(m.name), cat: "liquor", price: m.extra,
     mods: null, mixerOnly: true, cancelled: false, orderedAt: new Date().toISOString()
   }, 1);
   showToast(`${mixerOnlyName(m.name)} を追加しました`);
@@ -1855,7 +1905,7 @@ function confirmQtyPick() {
     const n = qtyPickQty[it.id] || 0;
     if (n > 0) {
       addStaged({
-        id: nextItemId++, name: it.name, cat: conf.cat, price: it.price,
+        id: nextItemId_(), name: it.name, cat: conf.cat, price: it.price,
         mods: null, cancelled: false, orderedAt: new Date().toISOString()
       }, n);
     }
@@ -1893,7 +1943,7 @@ function pickCocktailPrice(p) {
 }
 function confirmCocktail(label) {
   if (!modalState.cocktailPrice) return;
-  addStaged({ id: nextItemId++, name: label, cat: "cocktail", price: modalState.cocktailPrice, mods: null, cancelled: false, orderedAt: new Date().toISOString() }, 1);
+  addStaged({ id: nextItemId_(), name: label, cat: "cocktail", price: modalState.cocktailPrice, mods: null, cancelled: false, orderedAt: new Date().toISOString() }, 1);
   closeModifierModal();
   renderItemPicker();
 }
@@ -1948,7 +1998,7 @@ function confirmCustomOrder() {
   if (!desc || !basePrice) { return; }
   const price = basePrice + (customMixerExtra || 0);
   const name = customMixerExtra ? `${desc}(割材+${customMixerExtra}円)` : desc;
-  addStaged({ id: nextItemId++, name, cat: activeItemTab === 'liquor' ? 'liquor' : activeItemTab === 'bottle' ? 'bottle' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() }, 1);
+  addStaged({ id: nextItemId_(), name, cat: activeItemTab === 'liquor' ? 'liquor' : activeItemTab === 'bottle' ? 'bottle' : 'dish', price, mods: null, custom: true, cancelled: false, orderedAt: new Date().toISOString() }, 1);
   closeModifierModal();
   renderItemPicker();
 }
@@ -1958,7 +2008,7 @@ document.getElementById("refresh-btn").addEventListener("click", () => { loadDat
 // ---- 自動更新 ----
 // 何か操作している最中に画面を作り直すと入力が飛ぶので、手が止まっているときだけ更新する
 // 画面に出ていないとき(タブが裏 / まとめアプリで別タブを見ている)は通信しない。
-// jsonbinへの通信回数を減らすため。
+// 通信回数を減らすため。
 function offscreen() {
   if (document.hidden) return true;
   if (!document.body || document.body.clientWidth === 0) return true;  // 非表示のiframe
@@ -1973,7 +2023,7 @@ function uiBusy() {
   if (vn && vn.style.display !== "none") return true;   // 新規伝票の入力中
   return false;
 }
-// 20秒ごとだとjsonbinへの通信が多くなりすぎるので60秒。画面が隠れている間は止める
+// 60秒ごと。画面が隠れている間は止める
 setInterval(() => { if (!offscreen() && !uiBusy()) loadData(); }, 60000);
 // 未送信が残っているときは、画面を見ていなくても送り直しを試し続ける
 setInterval(() => { if (pendingSync && !saving && hasBaseline) saveData(); }, 45000);

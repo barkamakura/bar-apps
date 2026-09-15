@@ -113,7 +113,7 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 </script>
 
 <div class="app">
-  <h1>Bar KAMAKURA 値段確認<span class="ver-badge">v36</span></h1>
+  <h1>Bar KAMAKURA 値段確認<span class="ver-badge">v37</span></h1>
   <p class="subtitle">料理・お酒の品目と値段を記録します(税込原価から原価率17.5%で自動計算)</p>
   <div id="load-alert" style="display:none"></div>
   <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">読み込み中...</span> <button id="refresh-btn" style="margin-left:8px; background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border); cursor:pointer; font-size:12px; border-radius:8px; padding:6px 10px;">🔄 更新</button></div>
@@ -258,19 +258,61 @@ try { if (localStorage.getItem("bk_unlocked") !== "1") location.replace("index.h
 
       <div id="an-table"></div>
       <div id="an-zero"></div>
+      <div id="an-usage" class="an-note" style="margin-top:22px;"></div>
     </div>
   </div>
 </div>
 
 <script>
-// ---- shared jsonbin.io backend (same bin as reservation app, different key) ----
-const BIN_ID = "6a843737da38895dfef24f99";
-const API_KEY = "$2a$10$jiwjfT19MDnJjirDWpn/3.ifgrcNeVrTA46lGgVe65q5zzQzdS3ya";
-const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+// ==================== Supabase 接続（v37） ====================
+// jsonbin（100KBの上限で営業が止まった）から乗り換え。
+// 変わった行だけを送り、必要な行だけを読む。
+const SB_URL = "https://ygoenedypmqclgbcsgmo.supabase.co";
+const SB_KEY = "sb_publishable_0MKfDXkADPD2w7-Ewtz6MA_ineWsTMK";
+const SB_H = { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" };
 
-let fullRecord = {};
+async function sbGet(path) {
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, { headers: SB_H, cache: "no-store" });
+  if (!r.ok) throw new Error("読み込み失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+  return r.json();
+}
+async function sbUpsert(table, rows, conflict) {
+  if (!rows || !rows.length) return;
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?on_conflict=${conflict || "id"}`, {
+    method: "POST",
+    headers: { ...SB_H, Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(rows)
+  });
+  if (!r.ok) throw new Error("書き込み失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+}
+async function sbPatch(table, filter, body) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
+    method: "PATCH", headers: { ...SB_H, Prefer: "return=minimal" }, body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error("更新失敗 " + r.status + " " + (await r.text()).slice(0, 120));
+}
+// 端末をまたいでぶつからないID
+// 時刻(ミリ秒) × 1000 ＋ 端末番号(0〜9) × 100 ＋ 連番(0〜99)
+// → 同じミリ秒に同じ端末で100件作っても被らない。端末は10台まで区別できる。
+// （Date.now()*1000 は約1.8e15。JSが正確に扱える上限 9.0e15 の内側なので安全）
+const BK_DEVICE_NO = (() => {
+  try {
+    let d = localStorage.getItem("bk_device_no");
+    if (d === null) { d = String(Math.floor(Math.random() * 10)); localStorage.setItem("bk_device_no", d); }
+    return Number(d) % 10;
+  } catch (e) { return Math.floor(Math.random() * 10); }
+})();
+let _bkLastMs = 0, _bkSeq = 0;
+function newId() {
+  let t = Date.now();
+  if (t <= _bkLastMs) {
+    _bkSeq++;
+    if (_bkSeq >= 100) { _bkLastMs = _bkLastMs + 1; _bkSeq = 0; }   // 時計を1ms進める
+  } else { _bkLastMs = t; _bkSeq = 0; }
+  return _bkLastMs * 1000 + BK_DEVICE_NO * 100 + _bkSeq;
+}
+
 let menu = { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
-let nextId = 1;
 
 // ---- 商品分析 ----
 const DAY_START_HOUR = 17;          // 17時区切りの営業日(売上記録アプリと同じ)
@@ -341,7 +383,7 @@ let hasBaseline = false;   // サーバーか端末のどちらかからメニ�
 let pendingSync = false;   // まだサーバーに送れていない変更があるか
 
 function saveLocalMenu() {
-  try { localStorage.setItem(LS_MENU_KEY, JSON.stringify({ menu, nextId, at: Date.now() })); } catch (e) {}
+  try { localStorage.setItem(LS_MENU_KEY, JSON.stringify({ menu, at: Date.now() })); } catch (e) {}
 }
 function loadLocalMenu() {
   try {
@@ -358,38 +400,53 @@ function setLoadAlert(msg) {
   el.innerHTML = msg + '<br><button onclick="loadData()">もう一度読み込む</button>';
 }
 
+const KIND_BUCKET = { dish: "dishes", liquor: "liquors", bottle: "bottles", cocktail: "cocktails", shot: "shots" };
+const BUCKET_KIND = { dishes: "dish", liquors: "liquor", bottles: "bottle", cocktails: "cocktail", shots: "shot" };
+
+function rowToMenu(m) {
+  const o = { id: Number(m.id), name: m.name };
+  if (m.category) o.category = m.category;
+  if (m.kind === "liquor") {
+    o.sellPrice = Number(m.price || 0);
+    if (m.fixed_price) o.fixedPrice = true;
+    if (m.bottle_ml != null) o.bottleMl = m.bottle_ml;
+    if (m.pour_ml != null) o.pourMl = m.pour_ml;
+    if (m.bottle_cost != null) o.bottlePrice = m.bottle_cost;
+  } else o.price = Number(m.price || 0);
+  return o;
+}
+function menuToRow(o, bucket) {
+  const kind = BUCKET_KIND[bucket];
+  return {
+    id: o.id, kind, name: o.name, category: o.category || null,
+    price: Number(kind === "liquor" ? (o.sellPrice || 0) : (o.price || 0)),
+    fixed_price: !!o.fixedPrice,
+    bottle_ml: o.bottleMl ?? null, pour_ml: o.pourMl ?? null, bottle_cost: o.bottlePrice ?? null,
+    deleted: false
+  };
+}
+
 async function loadData() {
   setSync("syncing", "読み込み中...");
   try {
-    const res = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res.ok) throw new Error("サーバー応答 " + res.status);
-    const json = await res.json();
-    fullRecord = json.record || {};
-    const serverMenu = fullRecord.menuItems || { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
-    // ⚠️ まだ送れていない手元の登録を、読み込みで消してしまわないよう突き合わせる
+    const rows = await sbGet("menu_items?select=*&deleted=eq.false");
+    const serverMenu = { dishes: [], liquors: [], bottles: [], cocktails: [], shots: [] };
+    rows.forEach(m => { const b = KIND_BUCKET[m.kind]; if (b) serverMenu[b].push(rowToMenu(m)); });
+    // まだ送れていない手元の登録を、読み込みで消してしまわないよう突き合わせる
     menu = hasBaseline ? mergeMenu(serverMenu, menu) : serverMenu;
-    analysisSlips = (fullRecord.slips || []).filter(x => x && x.status === "paid");
-    if (!menu.cocktails) menu.cocktails = [];
-    if (!menu.shots) menu.shots = [];
-    const allIds = [...menu.dishes, ...menu.liquors, ...menu.bottles, ...menu.cocktails, ...menu.shots].map(i => i.id || 0);
-    nextId = (allIds.length ? Math.max(...allIds) : 0) + 1;
     loaded = true;
     hasBaseline = true;
     saveLocalMenu();
     if (pendingSync) { saveData(); } else { setLoadAlert(""); setSync("", "同期済み(全員で共有中)"); }
     migrateHotDrinkPrices();
   } catch (e) {
-    // ⚠️ ここで loaded を立てない。立てると「空っぽの一覧」を保存してしまい、
-    //    登録済みの商品が全部消える(v32で対策)
     setSync("error", "読み込みエラー(" + netWhy(e) + ")");
     if (!hasBaseline) {
       const bk = loadLocalMenu();
       if (bk) {
-        // サーバーが読めない → 端末に残っている一覧で続けられるようにする
         menu = bk.menu;
         if (!menu.cocktails) menu.cocktails = [];
         if (!menu.shots) menu.shots = [];
-        nextId = Math.max(nextId, bk.nextId || 1);
         hasBaseline = true;
         pendingSync = true;
         setLoadAlert("📶 <b>サーバーにつながらないため、この端末に残っていた一覧を表示しています。</b><br>"
@@ -405,7 +462,25 @@ async function loadData() {
   renderAll();
 }
 
-// ホットドリンクの値段を過去の登録分もまとめて最新の固定価格に揃える(古い500円などが残っていたら自動で600円に直す)
+// 商品分析で使う伝票は、必要なときにだけ取りに行く（起動時には読まない）
+async function loadAnalysisSlips(fromIso, toIso) {
+  let q = "slips?select=id,guest_count,rebook,nomi_count,nomi_extends,paid_at,slip_items(name,cat,price,mixer,nomi,cancelled)"
+        + "&status=eq.paid&deleted_at=is.null";
+  if (fromIso) q += `&paid_at=gte.${fromIso}`;
+  if (toIso)   q += `&paid_at=lt.${toIso}`;
+  const rows = await sbGet(q + "&limit=5000");
+  return rows.map(r => ({
+    id: Number(r.id), count: Number(r.guest_count || 1), rebook: !!r.rebook,
+    nomihodai: r.nomi_count != null ? { count: Number(r.nomi_count), extends: Number(r.nomi_extends || 0) } : null,
+    paidAt: r.paid_at, status: "paid",
+    items: (r.slip_items || []).map(i => ({
+      name: i.name, cat: i.cat, price: Number(i.price || 0),
+      mods: i.mixer ? { mixer: Number(i.mixer) } : null,
+      nomi: !!i.nomi, cancelled: !!i.cancelled
+    }))
+  }));
+}
+
 function migrateHotDrinkPrices() {
   let changed = false;
   menu.liquors.forEach(l => {
@@ -442,33 +517,29 @@ function mergeMenu(serverMenu, localMenu) {
 
 let saving = false, saveQueued = false, saveTimer = null, saveFails = 0;
 
+// 変わった商品だけを送る。以前は「店の全データ」を毎回送り直していた。
 async function saveData() {
-  // ⚠️ 土台が無い状態で保存すると、登録済みの商品を空で上書きしてしまう
   if (!hasBaseline) {
     setSync("error", "まだ読み込めていないので保存しません");
     setLoadAlert("⚠️ <b>お店のデータを読み込めていないため、保存していません。</b><br>"
       + "電波・Wi-Fiを確認して読み込み直してから、もう一度登録してください。");
     return;
   }
-  saveLocalMenu();                 // まず端末に残す(ここは通信しないので失敗しない)
   if (saving) { saveQueued = true; return; }
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   saving = true;
+  saveLocalMenu();
   setSync("syncing", "保存中...");
   try {
-    const res0 = await fetch(`${BASE_URL}/latest`, { headers: { "X-Master-Key": API_KEY } });
-    if (!res0.ok) throw new Error("読み直し失敗 " + res0.status);
-    fullRecord = (await res0.json()).record || {};
-    menu = mergeMenu(fullRecord.menuItems, menu);
-    if (!menu.cocktails) menu.cocktails = [];
-    if (!menu.shots) menu.shots = [];
-    fullRecord.menuItems = menu;
-    const res = await fetch(BASE_URL, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
-      body: JSON.stringify(fullRecord)
-    });
-    if (!res.ok) throw new Error("書き込み失敗 " + res.status);
+    const rows = [];
+    for (const b of MENU_KEYS) (menu[b] || []).forEach(o => { if (o && o.id != null) rows.push(menuToRow(o, b)); });
+    await sbUpsert("menu_items", rows, "id");
+    // 消した商品は行を残したまま deleted の印をつける
+    const gone = [...deletedMenuIds];
+    if (gone.length) {
+      await sbPatch("menu_items", `id=in.(${gone.join(",")})`, { deleted: true });
+      deletedMenuIds.clear();
+    }
     saveFails = 0;
     pendingSync = false;
     saveLocalMenu();
@@ -478,9 +549,9 @@ async function saveData() {
   } catch (e) {
     saveFails++;
     pendingSync = true;
-    saveLocalMenu();                              // 端末には必ず残す
+    saveLocalMenu();
     const why = netWhy(e);
-    const slow = why.includes("回数制限") || why.includes("集中");
+    const slow = why.includes("集中") || why.includes("鍵");
     const wait = slow ? Math.min(120, 20 * saveFails) : Math.min(30, 3 * saveFails);
     setSync("error", "保存エラー(" + why + ")");
     setLoadAlert(`📶 <b>まだサーバーに送れていません</b>（${saveFails}回・${why}）。<br>`
@@ -516,7 +587,7 @@ document.getElementById("dish-add").addEventListener("click", () => {
   const category = document.getElementById("dish-category").value;
   const price = parseFloat(document.getElementById("dish-price").value);
   if (!name || !category || !price) { alert("品目名・ジャンル・値段はすべて入力してください"); return; }
-  menu.dishes.push({ id: nextId++, name, category, price });
+  menu.dishes.push({ id: newId(), name, category, price });
   document.getElementById("dish-name").value = "";
   document.getElementById("dish-category").value = "";
   document.getElementById("dish-price").value = "";
@@ -529,7 +600,7 @@ document.getElementById("cocktail-add").addEventListener("click", () => {
   const name = document.getElementById("cocktail-name").value.trim();
   const price = parseFloat(document.getElementById("cocktail-price").value);
   if (!name || !price) { return; }
-  menu.cocktails.push({ id: nextId++, name, price });
+  menu.cocktails.push({ id: newId(), name, price });
   document.getElementById("cocktail-name").value = "";
   document.getElementById("cocktail-price").value = "";
   renderAll();
@@ -541,7 +612,7 @@ document.getElementById("shot-add").addEventListener("click", () => {
   const name = document.getElementById("shot-name").value.trim();
   const price = parseFloat(document.getElementById("shot-price").value);
   if (!name || !price) { return; }
-  menu.shots.push({ id: nextId++, name, price });
+  menu.shots.push({ id: newId(), name, price });
   document.getElementById("shot-name").value = "";
   document.getElementById("shot-price").value = "";
   renderAll();
@@ -554,7 +625,7 @@ document.getElementById("bottle-add").addEventListener("click", () => {
   const category = document.getElementById("bottle-category").value;
   const price = parseFloat(document.getElementById("bottle-price").value);
   if (!name || !category || !price) { alert("品目名・ジャンル・値段はすべて入力してください"); return; }
-  menu.bottles.push({ id: nextId++, name, category, price });
+  menu.bottles.push({ id: newId(), name, category, price });
   document.getElementById("bottle-name").value = "";
   document.getElementById("bottle-category").value = "";
   document.getElementById("bottle-price").value = "";
@@ -641,9 +712,9 @@ document.getElementById("liq-add").addEventListener("click", () => {
 
   if (category === SOFT_DRINK_CATEGORY) {
     const sellPrice = parseFloat(document.getElementById("liq-soft-price").value);
-    menu.liquors.push({ id: nextId++, name, category, sellPrice, fixedPrice: true });
+    menu.liquors.push({ id: newId(), name, category, sellPrice, fixedPrice: true });
   } else if (category === HOT_DRINK_CATEGORY) {
-    menu.liquors.push({ id: nextId++, name, category, sellPrice: HOT_DRINK_PRICE, fixedPrice: true });
+    menu.liquors.push({ id: newId(), name, category, sellPrice: HOT_DRINK_PRICE, fixedPrice: true });
   } else {
     const bottleMl = parseFloat(document.getElementById("liq-bottle-ml").value);
     const pourMl = parseFloat(document.getElementById("liq-pour-ml").value);
@@ -651,7 +722,7 @@ document.getElementById("liq-add").addEventListener("click", () => {
     if (!bottleMl || !pourMl || !bottlePrice) { alert("数値はすべて入力してください"); return; }
     const c = calcLiquor(bottleMl, pourMl, bottlePrice);
     menu.liquors.push({
-      id: nextId++, name, category, bottleMl, pourMl, bottlePrice,
+      id: newId(), name, category, bottleMl, pourMl, bottlePrice,
       taxRate: TAX_RATE, bottlePriceIncTax: c.bottlePriceIncTax,
       costRate: COST_RATE, costPerPour: c.costPerPour,
       priceMultiplied: c.priceMultiplied, sellPrice: c.sellPrice
@@ -680,7 +751,6 @@ function deleteItem(category, id) {
 
 // ---- render ----
 function renderAll() {
-  if (typeof anRender === "function") anRender();   // 商品分析も一緒に更新
   renderDish();
   renderLiquor();
   renderBottle();
@@ -802,7 +872,7 @@ window.addEventListener("online", () => { if (pendingSync) saveData(); });
 
 // ==================== 商品分析 ====================
 // 伝票アプリでお会計した伝票から、商品ごとの出数と売上を数える。
-// データは読み込み済みの fullRecord をそのまま使うので、通信は増えない。
+// 期間を選んだときにだけ、その期間の伝票を取りに行く（起動時には読まない）。
 
 function anBizDay(iso) {
   const d = new Date(iso);
@@ -823,6 +893,27 @@ function anDefaultDate() {
   if (anPeriod === "month") return anYm(t);
   if (anPeriod === "year")  return String(t.getFullYear());
   return "";
+}
+
+// 選んだ期間を「いつからいつまで」に変換する（営業日は17時区切り）
+function anRangeIso() {
+  if (anPeriod === "all") return [null, null];
+  const key = anDate || anDefaultDate();
+  let from, to;
+  if (anPeriod === "day") {
+    const [y, m, d] = key.split("-").map(Number);
+    from = new Date(y, m - 1, d,     17, 0, 0, 0);
+    to   = new Date(y, m - 1, d + 1, 17, 0, 0, 0);
+  } else if (anPeriod === "month") {
+    const [y, m] = key.split("-").map(Number);
+    from = new Date(y, m - 1, 1, 17, 0, 0, 0);
+    to   = new Date(y, m,     1, 17, 0, 0, 0);
+  } else {
+    const y = Number(key);
+    from = new Date(y,     0, 1, 17, 0, 0, 0);
+    to   = new Date(y + 1, 0, 1, 17, 0, 0, 0);
+  }
+  return [from.toISOString(), to.toISOString()];
 }
 
 // 期間に入る伝票だけ取り出す
@@ -896,10 +987,29 @@ function anRangeText() {
   return `${key}年（営業日は17時区切り）`;
 }
 
-function anRender() {
+let anLoading = false;
+async function anRender() {
   if (!anOpen) return;
   anRenderPeriodInput();
   document.getElementById("an-range").textContent = anRangeText();
+
+  // 選んだ期間の伝票をサーバーから取りに行く
+  if (anLoading) return;
+  anLoading = true;
+  try {
+    const [from, to] = anRangeIso();
+    document.getElementById("an-tiles").innerHTML = '<div class="an-tile"><div class="t-label">集計中...</div></div>';
+    analysisSlips = await loadAnalysisSlips(from, to);
+  } catch (e) {
+    document.getElementById("an-tiles").innerHTML =
+      '<div class="an-tile"><div class="t-label">読み込めませんでした</div><div class="t-value" style="font-size:14px;">'
+      + escapeHtmlAn(netWhy(e)) + '</div></div>';
+    document.getElementById("an-table").innerHTML = "";
+    document.getElementById("an-zero").innerHTML = "";
+    anLoading = false;
+    return;
+  }
+  anLoading = false;
 
   const data = anBuild();
   const tiles = document.getElementById("an-tiles");
@@ -943,6 +1053,8 @@ function anRender() {
       </table>`;
   }
 
+  anRenderUsage();
+
   // 登録してあるのに1つも出ていない商品(仕入れの見直し用)
   const ordered = new Set(Object.keys(map));
   const zero = anMenuList(anCat).filter(m => !ordered.has(m.name));
@@ -954,6 +1066,35 @@ function anRender() {
       ? '<div class="an-note">登録してある商品はすべて出ています。</div>'
       : `<div class="an-note">${zero.map(m => escapeHtmlAn(m.name)).join(" ・ ")}</div>`}
   `;
+}
+
+// ---- データ使用量 ----
+// jsonbin時代に100KBの上限に気づかず営業が止まった。同じことを繰り返さないための表示。
+const SB_FREE_LIMIT_MB = 500;
+async function anRenderUsage() {
+  const el = document.getElementById("an-usage");
+  if (!el) return;
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/slips?select=id`,
+      { headers: { ...SB_H, Prefer: "count=exact", Range: "0-0" } });
+    const cr = r.headers.get("content-range") || "";
+    const slipTotal = Number((cr.split("/")[1] || "0")) || 0;
+    const r2 = await fetch(`${SB_URL}/rest/v1/slip_items?select=id`,
+      { headers: { ...SB_H, Prefer: "count=exact", Range: "0-0" } });
+    const cr2 = r2.headers.get("content-range") || "";
+    const itemTotal = Number((cr2.split("/")[1] || "0")) || 0;
+    // 実測: 伝票の器 約300バイト / 注文1点 約200バイト(索引込み)
+    const mb = (slipTotal * 300 + itemTotal * 200) / 1024 / 1024;
+    const pct = mb / SB_FREE_LIMIT_MB * 100;
+    const warn = pct >= 80;
+    el.innerHTML = `<b>データ使用量</b>　伝票 ${slipTotal.toLocaleString()}件 ・ 注文 ${itemTotal.toLocaleString()}点`
+      + `　→ 約 ${mb.toFixed(1)}MB / ${SB_FREE_LIMIT_MB}MB（<b>${pct.toFixed(1)}%</b>）`
+      + (warn
+          ? '<br><span style="color:#b3261e;font-weight:800;">⚠️ 8割を超えました。古い記録の整理か、上位プランへの切り替えを検討してください。</span>'
+          : '<br>まだ十分に余裕があります。年に1回はここを見てください。');
+  } catch (e) {
+    el.innerHTML = "データ使用量: 取得できませんでした（" + escapeHtmlAn(netWhy(e)) + "）";
+  }
 }
 
 function escapeHtmlAn(x) {
